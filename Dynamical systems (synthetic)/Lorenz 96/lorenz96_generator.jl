@@ -82,6 +82,6 @@ function save_sim_obs_to_file(path, sim, obs)
 end
 
 current_datetime_fs_string = Dates.format(now(), "yyyy-mm-dd_HH-MM-SS")
-save_path = "./data/sims/L96_SYSTEM_$(current_datetime_fs_string)_$(state_dimension)_DIM_STATE_$(size(H)[1])_DIM_OBS_WITH_$(sparsity_amount)_SPARSITY/"
+save_path = "./Lorenz 96/data/L96_SYSTEM_$(current_datetime_fs_string)_$(state_dimension)_DIM_STATE_$(size(H)[1])_DIM_OBS_WITH_$(sparsity_amount*100)PERCENT_SPARSITY/"
 
 save_sim_obs_to_file(save_path, sim, observations)

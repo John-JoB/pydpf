@@ -1,7 +1,8 @@
-# using Plots;
-# plotlyjs();
 using Pkg
 Pkg.activate("DynamicalSystemsGeneration")
+
+# using Plots;
+# plotlyjs();
 using Random
 using LinearAlgebra
 using DifferentialEquations
@@ -36,16 +37,16 @@ end
 
 
 state_dimension = 25
-num_series = 100
+num_series = 1000
 delta_t = 0.01
 u0 = ones(state_dimension)
 u0[1] = 0.01
 
 tspan = (0.0, 10.0)
 
-prob = SDEProblem(lorenz!, σ_lorenz, u0, tspan, [8,])
+prob = SDEProblem{true}(lorenz!, σ_lorenz, u0, tspan, [8,])
 
-ensemble_prob = EnsembleProblem(prob, prob_func=prob_func)
+ensemble_prob = EnsembleProblem(prob, prob_func=prob_func, safetycopy=false)
 sim = solve(ensemble_prob, SOSRA(), EnsembleThreads(), trajectories=num_series, saveat=0.0:delta_t:20.0)
 # plot(sim, idxs=(1, 2, 3))
 
@@ -82,6 +83,6 @@ function save_sim_obs_to_file(path, sim, obs)
 end
 
 current_datetime_fs_string = Dates.format(now(), "yyyy-mm-dd_HH-MM-SS")
-save_path = "./Lorenz 96/data/L96_SYSTEM_$(current_datetime_fs_string)_$(state_dimension)_DIM_STATE_$(size(H)[1])_DIM_OBS_WITH_$(sparsity_amount*100)PERCENT_SPARSITY/"
+save_path = "./Lorenz 96/data/L96_SYSTEM_$(current_datetime_fs_string)_$(state_dimension)_DIM_STATE_$(size(H)[1])_DIM_OBS_WITH_$(sparsity_amount*100)PERCENT_SPARSITY/";
 
-save_sim_obs_to_file(save_path, sim, observations)
+# save_sim_obs_to_file(save_path, sim, observations)

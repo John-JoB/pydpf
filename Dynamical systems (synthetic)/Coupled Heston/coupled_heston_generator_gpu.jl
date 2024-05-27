@@ -1,43 +1,44 @@
 using Pkg
 Pkg.activate("DynamicalSystemsGeneration")
+using DiffEqGPU, CUDA
 using DifferentialEquations
 using Plots; plotlyjs()
 using Random
 using Statistics
 using DifferentialEquations.EnsembleAnalysis
+using StaticArrays
 import RandomNumbers: Xorshifts
 
 
 Random.seed!(7734)
 
-μ = log(1 + 0.10) / 252
+const μ = log(1.0f0 + 0.10f0) / 252.0f0
 # θ = 6.47e-5
 # κ = 0.097
 # σ = 5.38e-3
 # ρ = -0.5
-θ = 0.0055 / sqrt(252)
-κ = 5.0
-σ = 0.3 / sqrt(252)
-ρ = -0.30
-v0 = θ
-tspan = (0.0, 252.0)
+const θ = 0.0055f0 / sqrt(252.0f0)
+const κ = 5.0f0
+const σ = 0.3f0 / sqrt(252.0f0)
+const ρ = -0.30f0
+const v0 = θ
+const tspan = (0.0f0, 252.0f0)
 
 feller = 2*κ*θ > σ^2
-sim = nothing
-summ = nothing
-GC.gc()
 # @assert feller
 
-function HestonProblem(μ, κ, θ, σ, ρ, u0, tspan; seed=UInt64(0), kwargs...)
-    f = function (du, u, p, t)
-        du[1] = μ * u[1]
-        du[2] = κ * (θ - max(0.0, u[2]))
+function HestonProblemStatic(μ, κ, θ, σ, ρ, u0, tspan; seed=UInt64(0), kwargs...)
+    f = function (u, p, t)
+        du1 = μ * u[1]
+        du2 = κ * (θ - max(0.0f0, u[2]))
+        return SVector(du1, du2)
     end
-    g = function (du, u, p, t)
-        du[1] = sqrt(max(0.0, u[2])) * u[1]
-        du[2] = σ * sqrt(max(0.0, u[2]))
+    g = function (u, p, t)
+        du1 = sqrt(max(0.0f0, u[2])) * u[1]
+        du2 = σ * sqrt(max(0.0f0, u[2]))
+        return SVector(du1, du2)
     end
-    Γ = [1 ρ; ρ 1] # Covariance Matrix
+    Γ = SA[1.0f0 ρ; ρ 1.0f0] # Covariance Matrix
     noise_rate_prototype = nothing
 
     if seed == 0
@@ -46,26 +47,26 @@ function HestonProblem(μ, κ, θ, σ, ρ, u0, tspan; seed=UInt64(0), kwargs...)
     noise = CorrelatedWienerProcess!(Γ, tspan[1], zeros(2), zeros(2),
         rng=Xorshifts.Xoroshiro128Plus(seed))
 
-    sde_f = SDEFunction{true}(f, g)
+    sde_f = SDEFunction{false}(f, g)
     SDEProblem(sde_f, u0, tspan, noise=noise, seed=seed, kwargs...)
 end
 
-heston_model = HestonProblem(μ, κ, θ, σ, ρ, [50.0, v0], tspan, seed=rand(UInt64))
+heston_model = HestonProblemStatic(μ, κ, θ, σ, ρ, SA[50.0f0, v0], tspan, seed=rand(UInt64))
 
 function reseed_heston(prob, i, repeat)
-    HestonProblem(μ, κ, θ, σ, ρ, [50.0, θ], tspan, seed=rand(UInt64))
+    HestonProblemStatic(μ, κ, θ, σ, ρ, SA[50.0f0, v0], tspan, seed=rand(UInt64))
 end
 
-check_domain(u, p, t) = u[2] < 0.0
+check_domain(u, p, t) = u[2] < 0.0f0
 
-heston_model = HestonProblem(μ, κ, θ, σ, ρ, [50.0, v0], tspan, seed=rand(UInt64))
+heston_model = HestonProblemStatic(μ, κ, θ, σ, ρ, SA[50.0f0, v0], tspan, seed=rand(UInt64))
 
 
-sol = solve(heston_model, SRIW1(), dt=1e-2, adaptive=false, saveat=tspan[1]:0.1:tspan[2], isoutofdomain=check_domain)
+sol = solve(heston_model, SRIW1(), dt=1f-2, adaptive=false, saveat=tspan[1]:0.1:tspan[2], isoutofdomain=check_domain)
 ensemble_prob = EnsembleProblem(heston_model, prob_func=reseed_heston, safetycopy=false)
-sim = solve(ensemble_prob, SRIW1(), dt=1e-2, adaptive=false, EnsembleThreads(), trajectories=2000, saveat=tspan[1]:1.0:tspan[2])
+sim = solve(ensemble_prob, GPUEM(), dt=1f-3, adaptive=false, EnsembleGPUKernel(CUDA.CUDABackend(), 0.0), trajectories=20000, saveat=tspan[1]:1f0:tspan[2])
 
-print("Done simulating!")
+print("Done simulating on GPU!")
 
 # p1 = plot(sol, lw=1.5, size=(666, 200), dpi=300, label="", idxs=(0, 1), ylabel="Price")
 # p2 = plot(sol, lw=1.5, size=(666, 200), dpi=300, label="", idxs=((t, v) -> (t, v), 0, 2), ylabel="Sq. Volatility")

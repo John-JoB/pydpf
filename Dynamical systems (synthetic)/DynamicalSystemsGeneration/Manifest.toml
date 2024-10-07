@@ -2,7 +2,7 @@
 
 julia_version = "1.10.3"
 manifest_format = "2.0"
-project_hash = "3a4403c2ed973aa75104ddd6e3e078d21734ed9e"
+project_hash = "ada96cb78230e1d77cb69a304f239aa72ec293dc"
 
 [[deps.ADTypes]]
 git-tree-sha1 = "016833eb52ba2d6bea9fcb50ca295980e728ee24"
@@ -501,9 +501,9 @@ uuid = "8ba89e20-285c-5b6f-9357-94700520ee1b"
 
 [[deps.Distributions]]
 deps = ["AliasTables", "FillArrays", "LinearAlgebra", "PDMats", "Printf", "QuadGK", "Random", "SpecialFunctions", "Statistics", "StatsAPI", "StatsBase", "StatsFuns"]
-git-tree-sha1 = "22c595ca4146c07b16bcf9c8bea86f731f7109d2"
+git-tree-sha1 = "9c405847cc7ecda2dc921ccf18b47ca150d7317e"
 uuid = "31c24e10-a181-5473-b8eb-7969acd0382f"
-version = "0.25.108"
+version = "0.25.109"
 
     [deps.Distributions.extensions]
     DistributionsChainRulesCoreExt = "ChainRulesCore"

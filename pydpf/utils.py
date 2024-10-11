@@ -29,9 +29,11 @@ def batched_select(tensor: torch.Tensor, index: torch.LongTensor) -> torch.Tenso
     elif tensor.dim() == index.dim():
         return torch.gather(input=tensor, index=index, dim=-1)
     elif tensor.dim() > index.dim():
-        index = index.view((*index.size(), *tuple([1 for _ in range(tensor.dim() - index.dim())])))
-        index = index.expand(*index.size(),*tuple([tensor.size(i) for i in range(index.dim(), tensor.dim())]))
-        return torch.gather(input =tensor, index=index, dim=index.dim()-1)
+        index_size = index.size()
+        index_dim = index.dim()
+        index = index.view((*index_size, *tuple([1 for _ in range(tensor.dim() - index_dim)])))
+        index = index.expand(*index_size,*tuple([tensor.size(i) for i in range(index_dim, tensor.dim())]))
+        return torch.gather(input =tensor, index=index, dim=index_dim-1)
     raise ValueError('index cannot have more dimensions than tensor')
 
 

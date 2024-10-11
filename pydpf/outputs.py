@@ -1,7 +1,7 @@
 import torch
 from typing import Callable
 def filtering_mean(function: Callable[[torch.Tensor], torch.Tensor] = lambda x: x):
-    def _filtering_mean(state: torch.Tensor, norm_weights: torch.Tensor, weight_magnitudes: torch.Tensor, data: torch.Tensor, time: int):
+    def _filtering_mean(state: torch.Tensor, norm_weights: torch.Tensor, *args, **kwargs) -> torch.Tensor:
         return torch.einsum('ij..., ij -> i... ', function(state), torch.exp(norm_weights))
     return _filtering_mean
 

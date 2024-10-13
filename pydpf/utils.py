@@ -2,7 +2,7 @@ import torch
 from typing import Tuple
 
 
-def batched_select(tensor: torch.Tensor, index: torch.LongTensor) -> torch.Tensor:
+def batched_select(tensor: torch.Tensor, index: torch.Tensor) -> torch.Tensor:
     """
     Batched analog to tensor[index].
     Use to select along the mth dimension of tensor.
@@ -21,10 +21,8 @@ def batched_select(tensor: torch.Tensor, index: torch.LongTensor) -> torch.Tenso
     -------
     output : A1 x A2 X ... X Am X D X B2 X ... X Bn torch.Tensor
     """
-
     if tensor.dim() == 3 and index.dim() == 2:
         #Special case common case for efficiency
-
         return torch.gather(input = tensor, index = index.unsqueeze(-1).expand(-1, -1, tensor.size(2)), dim=1)
     elif tensor.dim() == index.dim():
         return torch.gather(input=tensor, index=index, dim=-1)

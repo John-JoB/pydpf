@@ -1,8 +1,6 @@
 import torch
 from typing import Tuple, Any
 
-from twisted.runner.procmon import transport
-
 from .utils import batched_select
 
 def multinomial(state: torch.Tensor, weights: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
@@ -249,11 +247,13 @@ def sinkhorn_loop(log_a: torch.Tensor, log_b: torch.Tensor, cost: torch.Tensor, 
     return f, g, epsilon_now
 
 
-
-
-
 def optimal_transport(epsilon, threshold: float, max_iter: int, rate: float, transport_gradient_clip: float):
-    class OT_gradient_wrapper(torch.autograd.Function):
+    class OTGradientWrapper(torch.autograd.Function):
+        '''
+        Optimal transport gradient can suffer from numerical instability.
+        Add clip the gradient of the loss wrt the transport matrix to some user specified value.
+        This is done in Corenflos and Thornton's original implementation.
+        '''
         @staticmethod
         def forward(ctx: Any, transport_matrix):
             return transport_matrix
@@ -267,7 +267,7 @@ def optimal_transport(epsilon, threshold: float, max_iter: int, rate: float, tra
         diam = state.amax(dim=(1,2)) - state.amin(dim=(1,2))
         f, g, epsilon_used = sinkhorn_loop(weights, log_b, cost, epsilon, threshold, max_iter, diam.reshape(-1, 1, 1), rate)
         transport = get_transport_from_potentials(weights, log_b, cost, f, g, epsilon_used)
-        transport = OT_gradient_wrapper.apply(transport)
+        transport = OTGradientWrapper.apply(transport)
         return apply_transport(state, transport, N), torch.zeros_like(weights), transport
     return _optimal_transport
 

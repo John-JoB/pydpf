@@ -59,3 +59,30 @@ def normalise(tensor: torch.Tensor, dim: int = -1) -> Tuple[torch.Tensor, torch.
     """
     norm = torch.logsumexp(tensor, dim=dim, keepdim=True)
     return tensor - norm, norm
+
+def multiple_unsqueeze(tensor: torch.Tensor, n: int, dim: int = -1) -> torch.Tensor:
+    """
+    Unsqueeze multiple times at the same dimension.
+    Equivalent to:
+
+    for i in range(n):
+        tensor = tensor.unsqueeze(d)
+    return tensor
+
+    Parameters
+    ----------
+    tensor : torch.Tensor
+        Tensor to unsqueeze
+    n : int
+        Number of times to unsqueeze the tensor
+    dim : int
+        Dimension to unsqueeze the tensor at
+
+    Returns
+    -------
+    output : torch.Tensor
+        Unsqueezed tensor
+    """
+    if n == 0:
+        return tensor
+    return tensor[(slice(None),) * dim + (None, ) * n]

@@ -69,7 +69,8 @@ class DPF(ParticleFilter):
     """
 
     def __init__(self, initial_proposal: Callable[[int, torch.Tensor], Tuple[torch.Tensor, torch.Tensor]],
-                 proposal: Callable[[torch.Tensor, torch.Tensor, torch.Tensor, int], Tuple[torch.Tensor, torch.Tensor]]) -> None:
+                 proposal: Callable[[torch.Tensor, torch.Tensor, torch.Tensor, int], Tuple[torch.Tensor, torch.Tensor]],
+                 resampling_generator: torch.Generator = torch.default_generator) -> None:
         """
         Basic 'differentiable' particle filter, as described in R. Jonschkowski, D. Rastogi, O. Brock
         'Differentiable Particle Filters: End-to-End Learning with Algorithmic Priors' 2018.
@@ -82,7 +83,7 @@ class DPF(ParticleFilter):
         proposal: Callable[[torch.Tensor, torch.Tensor, torch.Tensor, int], Tuple[torch.Tensor, torch.Tensor]]
             Importance sampler from the proposal kernel, takes the state, weights and data and returns the new states and weights.
         """
-        super().__init__(initial_proposal, systematic, proposal)
+        super().__init__(initial_proposal, systematic(resampling_generator), proposal)
 
 class SoftDPF(ParticleFilter):
     """
@@ -92,7 +93,8 @@ class SoftDPF(ParticleFilter):
 
     def __init__(self, initial_proposal: Callable[[int, torch.Tensor], Tuple[torch.Tensor, torch.Tensor]],
                  proposal: Callable[[torch.Tensor, torch.Tensor, torch.Tensor, int], Tuple[torch.Tensor, torch.Tensor]],
-                 softness: float) -> None:
+                 softness: float,
+                 resampling_generator: torch.Generator = torch.default_generator) -> None:
         """
         Differentiable particle filter with soft-resampling.
 
@@ -106,7 +108,7 @@ class SoftDPF(ParticleFilter):
         softness: float
             The trade-off parameter between a uniform and the usual resampling distribution.
         """
-        super().__init__(initial_proposal, soft(softness), proposal)
+        super().__init__(initial_proposal, soft(softness, resampling_generator), proposal)
 
 class OptimalTransportDPF(ParticleFilter):
     """
@@ -151,7 +153,8 @@ class StopGradientDPF(ParticleFilter):
     'Differentiable Particle Filtering without Modifying the Forward Pass' 2021).
     """
     def __init__(self, initial_proposal: Callable[[int, torch.Tensor], Tuple[torch.Tensor, torch.Tensor]],
-                 proposal: Callable[[torch.Tensor, torch.Tensor, torch.Tensor, int], Tuple[torch.Tensor, torch.Tensor]]) -> None:
+                 proposal: Callable[[torch.Tensor, torch.Tensor, torch.Tensor, int], Tuple[torch.Tensor, torch.Tensor]],
+                 resampling_generator: torch.Generator = torch.default_generator) -> None:
         """
         Differentiable particle filter with stop-gradient resampling.
 
@@ -163,4 +166,4 @@ class StopGradientDPF(ParticleFilter):
         proposal: Callable[[torch.Tensor, torch.Tensor, torch.Tensor, int], Tuple[torch.Tensor, torch.Tensor]]
             Importance sampler from the proposal kernel, takes the state, weights and data and returns the new states and weights.
         """
-        super().__init__(initial_proposal, stop_gradient, proposal)
+        super().__init__(initial_proposal, stop_gradient(resampling_generator), proposal)

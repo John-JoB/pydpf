@@ -3,56 +3,67 @@ from typing import Tuple, Any
 
 from .utils import batched_select
 
-def multinomial(state: torch.Tensor, weights: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    with torch.no_grad():
-        sampled_indices = torch.multinomial(torch.exp(weights), weights.size(1), replacement=True).detach()
-    return batched_select(state, sampled_indices), torch.zeros_like(weights), sampled_indices
+def multinomial(generator: torch.Generator):
+    def _multinomial(state: torch.Tensor, weights: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        with torch.no_grad():
+            sampled_indices = torch.multinomial(torch.exp(weights), weights.size(1), replacement=True, generator=generator).detach()
+        return batched_select(state, sampled_indices), torch.zeros_like(weights), sampled_indices
+    return _multinomial
 
-def systematic(state: torch.Tensor, weights: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    with torch.no_grad():
-        offset = torch.rand((weights.size(0),), device=state.device)
-        cum_probs = torch.cumsum(torch.exp(weights), dim= 1)
-        #No index can be above 1. and the last index must be exactly 1.
-        #Fix this in case of numerical errors
-        cum_probs = torch.where(cum_probs > 1., 1., cum_probs)
-        cum_probs[:,-1] = 1.
-        resampling_points = torch.arange(weights.size(1), device=state.device) + offset.unsqueeze(1)
-        sampled_indices = torch.searchsorted(cum_probs * weights.size(1), resampling_points)
-    return batched_select(state, sampled_indices), torch.zeros_like(weights), sampled_indices
+def systematic(generator: torch.Generator):
+    def _systematic(state: torch.Tensor, weights: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        with torch.no_grad():
+            offset = torch.rand((weights.size(0),), device=state.device, generator=generator)
+            cum_probs = torch.cumsum(torch.exp(weights), dim= 1)
+            #No index can be above 1. and the last index must be exactly 1.
+            #Fix this in case of numerical errors
+            cum_probs = torch.where(cum_probs > 1., 1., cum_probs)
+            cum_probs[:,-1] = 1.
+            resampling_points = torch.arange(weights.size(1), device=state.device) + offset.unsqueeze(1)
+            sampled_indices = torch.searchsorted(cum_probs * weights.size(1), resampling_points)
+        return batched_select(state, sampled_indices), torch.zeros_like(weights), sampled_indices
+    return _systematic
 
 
-def soft(softness):
+def soft(softness: float, generator: torch.Generator):
     if softness < 0 or softness >= 1:
         raise ValueError(f'Softness {softness} is out of range, must be in [0,1)')
     log_softness = torch.log(torch.tensor([softness]))
     neg_log_softness = torch.log(torch.tensor([1 - softness]))
-    def _soft_systematic(state: torch.Tensor, weights: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    _systematic = systematic(generator)
+    def _soft(state: torch.Tensor, weights: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         nonlocal log_softness, neg_log_softness
         log_softness = log_softness.to(device=state.device)
         neg_log_softness = neg_log_softness.to(device=state.device)
         soft_weights = torch.logaddexp(weights + log_softness, neg_log_softness - torch.log(torch.tensor(weights.size(1), device = state.device)))
-        state, _, sampled_indices = systematic(state, soft_weights)
+        state, _, sampled_indices = _systematic(state, soft_weights)
         return state, weights - soft_weights, sampled_indices
-    return _soft_systematic
+    return _soft
 
-def soft_multinomial(softness):
+
+def soft_multinomial(softness: float, generator: torch.Generator):
     if softness < 0 or softness >= 1:
         raise ValueError(f'Softness {softness} is out of range, must be in [0,1)')
     log_softness = torch.log(torch.tensor([softness]))
     neg_log_softness = torch.log(torch.tensor([1 - softness]))
+    _multinomial = multinomial(generator=generator)
     def _soft_systematic(state: torch.Tensor, weights: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         nonlocal log_softness, neg_log_softness
         log_softness = log_softness.to(device = state.device)
         neg_log_softness = neg_log_softness.to(device = state.device)
         soft_weights = torch.logaddexp(weights + log_softness, neg_log_softness - torch.log(torch.tensor(weights.size(1), device = state.device)))
-        state, _, sampled_indices = multinomial(state, soft_weights)
+        state, _, sampled_indices = _multinomial(state, soft_weights)
         return state, weights - soft_weights, sampled_indices
     return _soft_systematic
 
-def stop_gradient(state: torch.Tensor, weight: torch.Tensor):
-    state, _, sampled_indices = systematic(state, weight)
-    resampled_weights = batched_select(weight, sampled_indices)
-    return state, resampled_weights - resampled_weights.detach(), sampled_indices
+
+def stop_gradient(generator: torch.Generator):
+    _systematic = systematic(generator=generator)
+    def _stop_gradient(state: torch.Tensor, weight: torch.Tensor):
+        state, _, sampled_indices = _systematic(state, weight)
+        resampled_weights = batched_select(weight, sampled_indices)
+        return state, resampled_weights - resampled_weights.detach(), sampled_indices
+    return _stop_gradient
 
 def diameter(x: torch.Tensor):
     diameter_x = torch.amax(x.std(dim=1, unbiased=False), dim=-1, keepdim=True)

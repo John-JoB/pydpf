@@ -5,6 +5,30 @@ from .utils import normalise
 from .base import Module
 from .resampling import systematic, soft, optimal_transport, stop_gradient
 
+'''
+Python module for the core filtering algorithms. 
+
+In pydpf a filtering algorithm is defined by it's sampling procedures rather than the
+underlying model. For example, in order sequential importance sampling, instead of providing a prior, dynamic kernel and observation model; 
+one provides two procedures: importance sampling from the posterior at time zero and importance sampling from the posterior at subsequent time
+steps. We motivate this choice in two respects, foremostly the flexibility provided with this design we permit the user to easily use 
+whatever proposal strategy their use case calls for without the package getting in the way. Secondarily, it is more conceptually inline
+with the set-up of most current DPF problems. One learns an algorithm that performs well on the desired metrics, not a model that is
+close to the truth.
+
+The downside to this strategy being it requires some extra work from the user in certain cases. For, example should the user want to try 
+slightly differing filtering algorithms on the same underlying parameterisation, then it is fully on them to design their code to make that 
+process easy.
+
+Note on Callables: most Modules in this file take at least one Callable argument, these must be instantiated Module (or less preferably 
+torch.nn.Module) classes with the forward() method defined if the function contains learnable parameters.
+
+Note on data: data should be treated similarly abstractly to the algorithm/model. The data passed to the proposal routines at each timestep
+should be whatever data is required to sample the desired posterior. In a vanilla (bootstrap) filtering scenario this the observation at 
+that time-step, but it doesn't have to be in general. pydpf makes no distinction between observations (past, present or future) and 
+exogenous variables, all are treated as non-random inputs.
+'''
+
 class SIS(Module):
     """
     SMC filters can, in general, be described as special cases of sequential importance sampling (SIS).
@@ -12,35 +36,86 @@ class SIS(Module):
     SIS iteratively importance samples a Markov-Chain.
     An SIS algorithm is defined by supplying an initial distribution and a Markov kernel.
     """
-    def __init__(self, prior: Callable[[int, torch.Tensor], Tuple[torch.Tensor, torch.Tensor]],
-                 sampler: Callable[[torch.Tensor, torch.Tensor, torch.Tensor, int], Tuple[torch.Tensor, torch.Tensor]]
+    def __init__(self, initial_proposal: Callable[[int, torch.Tensor], Tuple[torch.Tensor, torch.Tensor]],
+                 proposal: Callable[[torch.Tensor, torch.Tensor, torch.Tensor, int], Tuple[torch.Tensor, torch.Tensor]]
                  ):
-
         """
-        Module that represents a sequential importance sampling (SIS) algorithm.
+        Module that represents a sequential importance sampling (SIS) algorithm. A SIS algorthm is fully specified by its importance sampling
+        procedures, the user should supply a proposal kernel that may depend on the time-step; and a special case for time 0.
+
+        Notes
+        -----
+        This implementation is more general than the standard SIS algorithm. There is no independence requirements for the samples within a
+        batch. This means that the particles can be drawn from an arbitrary joint distribution on depended on the data and the particles at
+        the previous time-step. This means that both the usual particle filter and interacting multiple model particle filter are special
+        cases of this algorithm. It's also possible to make the filters within a batch depend on each other, but don't do that.
 
 
         Parameters
         ----------
-        prior: Callable[[int, torch.Tensor], Tuple[torch.Tensor, torch.Tensor]]
+        initial_proposal: Callable[[int, torch.Tensor], Tuple[torch.Tensor, torch.Tensor]]
             A callable object that takes the number of particles and the data/observations at time-step zero and returns an importance sample
             of the posterior, i.e. particle position and log weights.
 
-        sampler: Callable[[torch.Tensor, torch.Tensor, torch.Tensor, int], Tuple[torch.Tensor, torch.Tensor]]
-            A callable object that implements the proposal kernel. Takes the state and log weights at the previous time step, the discreet time index
-            i.e. how many iterations the filter has run for; and the data/observations at the current time-step. And returns a
+        proposal: Callable[[torch.Tensor, torch.Tensor, torch.Tensor, int], Tuple[torch.Tensor, torch.Tensor]]
+            A callable object that implements the proposal kernel. Takes the state and log weights at the previous time step,
+            the discreet time index i.e. how many iterations the filter has run for; and the data/observations at the current time-step.
+            And returns an importance sample of the posterior at the current time step, i.e. particle position and log weights.
         """
         super().__init__()
-        self.sampler = sampler
-        self.prior = prior
+        self.initial_proposal = initial_proposal
+        self.proposal = proposal
 
     def initialise(self, n_particles:int, data: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        state, weight = self.prior(n_particles, data[0])
+        """
+        Initialise the SIS filter by drawing the particles at time zero.
+
+        Parameters
+        ----------
+        n_particles: int
+            The number of particles to draw per filter.
+        data: torch.Tensor
+            The data associated to time-step zero.
+
+        Returns
+        -------
+            state: torch.Tensor
+                The locations of the particles at time zero.
+            weights: torch.Tensor
+                The log normalised weights of the particles at time zero.
+            weight_magnitude: torch.Tensor
+                The log of the sum of the unnormalised weights of the particles at time zero.
+        """
+        state, weight = self.initial_proposal(n_particles, data[0])
         weight, weight_magnitude = normalise(weight)
         return state, weight, weight_magnitude
 
     def advance_once(self, state: torch.Tensor, weight: torch.Tensor, time: int, data: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        new_state, new_weight = self.sampler(state, weight, data, time)
+        """
+        Advance the filter one time-step by drawing from the proposal kernel.
+
+        Parameters
+        ----------
+        state: torch.Tensor
+            The locations of the particles at the previous time-step.
+        weight: torch.Tensor
+            The log normalised weights of the particles at the previous time-step.
+        time: int
+            The current time-step.
+        data: torch.Tensor
+            The data associated to the current time-step.
+
+        Returns
+        -------
+            state: torch.Tensor
+                The locations of the particles at the current time-step.
+            weights: torch.Tensor
+                The log normalised weights of the particles at the current time-step.
+            weight_magnitude: torch.Tensor
+                The log of the sum of the unnormalised weights of the particles at the current time-step.
+        """
+
+        new_state, new_weight = self.proposal(state, weight, data, time)
         new_weight, new_weight_magnitude = normalise(new_weight)
         return new_state, new_weight, new_weight_magnitude
 
@@ -48,8 +123,30 @@ class SIS(Module):
                 n_particles: int,
                 time_extent: int,
                 aggregation_function: Callable[[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, int], torch.Tensor]) -> torch.Tensor:
-        #Typically one does not need to store the population of all particles at each timestep
-        #Use a function to aggregate over particles to save memory
+        """
+        Run a forward pass of the SIS filter. To save memory during inference runs we allow the user to pass a function that takes a population
+        of particles and processes this into an output for each time-step. For example, if the goal was the filtering mean then it would be
+        wasteful to store the full population of the particles for every time-step. Memory is not saved during training, because the
+        computation graph is stored.
+
+        Parameters
+        ----------
+        data: torch.Tensor
+            The data needed to run the filter.
+        n_particles: int
+            The number of particles to draw per filter.
+        time_extent: int
+            The maximum time-step to run to, including time 0, the filter will draw {time_extent + 1} importance sample populations.
+        aggregation_function: Callable[[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, int], torch.Tensor]
+            A Callable that processes the filtering outputs (the particle locations, the normalised log weights,
+            the log sum of the unormalised weights, and the time-step) into an output per time-step.
+
+        Returns
+        -------
+        output: torch.Tensor
+            The output of the filter, formed from stacking the output of aggregation_function for every time-step.
+        """
+
         state, weight, weight_magnitude = self.initialise(n_particles, data)
         temp = aggregation_function(state, weight, weight_magnitude, data[0], 0)
         output = torch.empty((time_extent+1, *temp.size()), device = data.device, dtype=torch.float32)
@@ -68,6 +165,30 @@ class ParticleFilter(SIS):
     def __init__(self, initial_proposal: Callable[[int, torch.Tensor], Tuple[torch.Tensor, torch.Tensor]],
                  resampler: Callable[[torch.Tensor, torch.Tensor], Tuple[torch.Tensor, torch.Tensor, torch.Tensor]],
                  proposal: Callable[[torch.Tensor, torch.Tensor, torch.Tensor, int], Tuple[torch.Tensor, torch.Tensor]]) -> None:
+        """
+        The standard particle filter is a special case of the SIS algorithm. We construct the particle filtering proposal by first
+        resampling particles from their population, then applying a proposal kernel restricted such that the particles depend only on the
+        population at the previous time-step through the particle at the same index.
+
+        Parameters
+        ----------
+        initial_proposal: Callable[[int, torch.Tensor], Tuple[torch.Tensor, torch.Tensor]]
+            A callable object that takes the number of particles and the data/observations at time-step zero and returns an importance sample
+            of the posterior, i.e. particle position and log weights.
+
+        resampler: Callable[[torch.Tensor, torch.Tensor], Tuple[torch.Tensor, torch.Tensor, torch.Tensor]]:
+            The resampling algorithm to use. Takes teh state and log weights at the previous time-step and returns the state and log weights
+            after resampling. Resampling algorithms must also return a third tensor. Used to report extra information about how the particles
+            were chosen, in most cases the resampled indices; this is often useful for diagnostics. But, this basic implementation discards
+            this tensor.
+
+        proposal: Callable[[torch.Tensor, torch.Tensor, torch.Tensor, int], Tuple[torch.Tensor, torch.Tensor]]
+            A callable object that implements the proposal kernel. Takes the state and log weights at the previous time step,
+            the discreet time index i.e. how many iterations the filter has run for; and the data/observations at the current time-step.
+            And returns an importance sample of the posterior at the current time step, i.e. particle position and log weights. For the
+            resultant algorithm to be properly a particle filter, this kernel should be restricted such that the particles depend only on the
+            population at the previous time-step through the particle at the same index.
+        """
         class PF_sampler(Module):
             def __init__(self):
                 super().__init__()
@@ -75,7 +196,7 @@ class ParticleFilter(SIS):
                 self.proposal = proposal
 
             def forward(self, x, w, data_, t):
-                resampled_x, resampled_w, resampled_indices = self.resampler(x, w)
+                resampled_x, resampled_w, _ = self.resampler(x, w)
                 return self.proposal(resampled_x, resampled_w, data_, t)
 
         super().__init__(initial_proposal, PF_sampler())

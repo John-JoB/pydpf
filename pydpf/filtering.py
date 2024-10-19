@@ -15,6 +15,21 @@ class SIS(Module):
     def __init__(self, prior: Callable[[int, torch.Tensor], Tuple[torch.Tensor, torch.Tensor]],
                  sampler: Callable[[torch.Tensor, torch.Tensor, torch.Tensor, int], Tuple[torch.Tensor, torch.Tensor]]
                  ):
+
+        """
+        Module that represents a sequential importance sampling (SIS) algorithm.
+
+
+        Parameters
+        ----------
+        prior: Callable[[int, torch.Tensor], Tuple[torch.Tensor, torch.Tensor]]
+            A callable object that takes the number of particles and the data/observations at time-step zero and returns an importance sample
+            of the posterior, i.e. particle position and log weights.
+
+        sampler: Callable[[torch.Tensor, torch.Tensor, torch.Tensor, int], Tuple[torch.Tensor, torch.Tensor]]
+            A callable object that implements the proposal kernel. Takes the state and log weights at the previous time step, the discreet time index
+            i.e. how many iterations the filter has run for; and the data/observations at the current time-step. And returns a
+        """
         super().__init__()
         self.sampler = sampler
         self.prior = prior
@@ -53,14 +68,17 @@ class ParticleFilter(SIS):
     def __init__(self, initial_proposal: Callable[[int, torch.Tensor], Tuple[torch.Tensor, torch.Tensor]],
                  resampler: Callable[[torch.Tensor, torch.Tensor], Tuple[torch.Tensor, torch.Tensor, torch.Tensor]],
                  proposal: Callable[[torch.Tensor, torch.Tensor, torch.Tensor, int], Tuple[torch.Tensor, torch.Tensor]]) -> None:
-        def PF_sampler(x: torch.Tensor,
-                       w: torch.Tensor,
-                       data_: torch.Tensor,
-                       t: int) -> Tuple[torch.Tensor, torch.Tensor]:
-            resampled_x, resampled_w, resampled_indices = resampler(x, w)
-            return proposal(resampled_x, resampled_w, data_, t)
+        class PF_sampler(Module):
+            def __init__(self):
+                super().__init__()
+                self.resampler = resampler
+                self.proposal = proposal
 
-        super().__init__(initial_proposal, PF_sampler)
+            def forward(self, x, w, data_, t):
+                resampled_x, resampled_w, resampled_indices = self.resampler(x, w)
+                return self.proposal(resampled_x, resampled_w, data_, t)
+
+        super().__init__(initial_proposal, PF_sampler())
 
 class DPF(ParticleFilter):
     """

@@ -8,8 +8,8 @@ from .resampling import systematic, soft, optimal_transport, stop_gradient
 '''
 Python module for the core filtering algorithms. 
 
-In pydpf a filtering algorithm is defined by it's sampling procedures rather than the
-underlying model. For example, in order sequential importance sampling, instead of providing a prior, dynamic kernel and observation model; 
+In pydpf a filtering algorithm is defined by it's sampling procedures rather than the underlying model. 
+For example, in order sequential importance sampling, instead of providing a prior, dynamic kernel and observation model; 
 one provides two procedures: importance sampling from the posterior at time zero and importance sampling from the posterior at subsequent time
 steps. We motivate this choice in two respects, foremostly the flexibility provided with this design we permit the user to easily use 
 whatever proposal strategy their use case calls for without the package getting in the way. Secondarily, it is more conceptually inline
@@ -151,7 +151,7 @@ class SIS(Module):
         temp = aggregation_function(state, weight, weight_magnitude, data[0], 0)
         output = torch.empty((time_extent+1, *temp.size()), device = data.device, dtype=torch.float32)
         output[0] = temp
-        for time in range(time_extent):
+        for time in range(1, time_extent+1):
             state, weight, weight_magnitude = self.advance_once(state, weight, time, data[time])
             output[time] = aggregation_function(state, weight, weight_magnitude, data[time], time)
         return output

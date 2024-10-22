@@ -161,3 +161,4 @@ cython_debug/
 
 # Specific files
 Testing.ipynb
+requirements.txt

@@ -1,6 +1,6 @@
 from typing import Callable, Tuple
 import torch
-
+from torch import Tensor
 from .utils import normalise
 from .base import Module
 from .resampling import systematic, soft, optimal_transport, stop_gradient
@@ -36,8 +36,8 @@ class SIS(Module):
     SIS iteratively importance samples a Markov-Chain.
     An SIS algorithm is defined by supplying an initial distribution and a Markov kernel.
     """
-    def __init__(self, initial_proposal: Callable[[int, torch.Tensor], Tuple[torch.Tensor, torch.Tensor]],
-                 proposal: Callable[[torch.Tensor, torch.Tensor, torch.Tensor, int], Tuple[torch.Tensor, torch.Tensor]]
+    def __init__(self, initial_proposal: Callable[[int, Tensor], Tuple[Tensor, Tensor]],
+                 proposal: Callable[[Tensor, Tensor, Tensor, int], Tuple[Tensor, Tensor]]
                  ):
         """
         Module that represents a sequential importance sampling (SIS) algorithm. A SIS algorthm is fully specified by its importance sampling
@@ -53,11 +53,11 @@ class SIS(Module):
 
         Parameters
         ----------
-        initial_proposal: Callable[[int, torch.Tensor], Tuple[torch.Tensor, torch.Tensor]]
+        initial_proposal: Callable[[int, Tensor], Tuple[Tensor, Tensor]]
             A callable object that takes the number of particles and the data/observations at time-step zero and returns an importance sample
             of the posterior, i.e. particle position and log weights.
 
-        proposal: Callable[[torch.Tensor, torch.Tensor, torch.Tensor, int], Tuple[torch.Tensor, torch.Tensor]]
+        proposal: Callable[[Tensor, Tensor, Tensor, int], Tuple[Tensor, Tensor]]
             A callable object that implements the proposal kernel. Takes the state and log weights at the previous time step,
             the discreet time index i.e. how many iterations the filter has run for; and the data/observations at the current time-step.
             And returns an importance sample of the posterior at the current time step, i.e. particle position and log weights.
@@ -66,7 +66,7 @@ class SIS(Module):
         self.initial_proposal = initial_proposal
         self.proposal = proposal
 
-    def initialise(self, n_particles:int, data: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    def initialise(self, n_particles:int, data: Tensor) -> Tuple[Tensor, Tensor, Tensor]:
         """
         Initialise the SIS filter by drawing the particles at time zero.
 
@@ -74,44 +74,44 @@ class SIS(Module):
         ----------
         n_particles: int
             The number of particles to draw per filter.
-        data: torch.Tensor
+        data: Tensor
             The data associated to time-step zero.
 
         Returns
         -------
-            state: torch.Tensor
+            state: Tensor
                 The locations of the particles at time zero.
-            weights: torch.Tensor
+            weights: Tensor
                 The log normalised weights of the particles at time zero.
-            weight_magnitude: torch.Tensor
+            weight_magnitude: Tensor
                 The log of the sum of the unnormalised weights of the particles at time zero.
         """
         state, weight = self.initial_proposal(n_particles, data[0])
         weight, weight_magnitude = normalise(weight)
         return state, weight, weight_magnitude
 
-    def advance_once(self, state: torch.Tensor, weight: torch.Tensor, time: int, data: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    def advance_once(self, state: Tensor, weight: Tensor, time: int, data: Tensor) -> Tuple[Tensor, Tensor, Tensor]:
         """
         Advance the filter one time-step by drawing from the proposal kernel.
 
         Parameters
         ----------
-        state: torch.Tensor
+        state: Tensor
             The locations of the particles at the previous time-step.
-        weight: torch.Tensor
+        weight: Tensor
             The log normalised weights of the particles at the previous time-step.
         time: int
             The current time-step.
-        data: torch.Tensor
+        data: Tensor
             The data associated to the current time-step.
 
         Returns
         -------
-            state: torch.Tensor
+            state: Tensor
                 The locations of the particles at the current time-step.
-            weights: torch.Tensor
+            weights: Tensor
                 The log normalised weights of the particles at the current time-step.
-            weight_magnitude: torch.Tensor
+            weight_magnitude: Tensor
                 The log of the sum of the unnormalised weights of the particles at the current time-step.
         """
 
@@ -119,10 +119,10 @@ class SIS(Module):
         new_weight, new_weight_magnitude = normalise(new_weight)
         return new_state, new_weight, new_weight_magnitude
 
-    def forward(self, data: torch.Tensor,
+    def forward(self, data: Tensor,
                 n_particles: int,
                 time_extent: int,
-                aggregation_function: Callable[[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, int], torch.Tensor]) -> torch.Tensor:
+                aggregation_function: Callable[[Tensor, Tensor, Tensor, Tensor, int], Tensor]) -> Tensor:
         """
         Run a forward pass of the SIS filter. To save memory during inference runs we allow the user to pass a function that takes a population
         of particles and processes this into an output for each time-step. For example, if the goal was the filtering mean then it would be
@@ -131,19 +131,19 @@ class SIS(Module):
 
         Parameters
         ----------
-        data: torch.Tensor
+        data: Tensor
             The data needed to run the filter.
         n_particles: int
             The number of particles to draw per filter.
         time_extent: int
             The maximum time-step to run to, including time 0, the filter will draw {time_extent + 1} importance sample populations.
-        aggregation_function: Callable[[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, int], torch.Tensor]
+        aggregation_function: Callable[[Tensor, Tensor, Tensor, Tensor, int], Tensor]
             A Callable that processes the filtering outputs (the particle locations, the normalised log weights,
             the log sum of the unormalised weights, and the time-step) into an output per time-step.
 
         Returns
         -------
-        output: torch.Tensor
+        output: Tensor
             The output of the filter, formed from stacking the output of aggregation_function for every time-step.
         """
 
@@ -162,9 +162,9 @@ class ParticleFilter(SIS):
         Helper class for a common case of the SIS, the particle filter (Doucet and Johansen 2008), (Chopin and Papaspiliopoulos 2020).
         Applies a resampling step prior to sampling from the proposal kernel.
     """
-    def __init__(self, initial_proposal: Callable[[int, torch.Tensor], Tuple[torch.Tensor, torch.Tensor]],
-                 resampler: Callable[[torch.Tensor, torch.Tensor], Tuple[torch.Tensor, torch.Tensor, torch.Tensor]],
-                 proposal: Callable[[torch.Tensor, torch.Tensor, torch.Tensor, int], Tuple[torch.Tensor, torch.Tensor]]) -> None:
+    def __init__(self, initial_proposal: Callable[[int, Tensor], Tuple[Tensor, Tensor]],
+                 resampler: Callable[[Tensor, Tensor], Tuple[Tensor, Tensor, Tensor]],
+                 proposal: Callable[[Tensor, Tensor, Tensor, int], Tuple[Tensor, Tensor]]) -> None:
         """
         The standard particle filter is a special case of the SIS algorithm. We construct the particle filtering proposal by first
         resampling particles from their population, then applying a proposal kernel restricted such that the particles depend only on the
@@ -172,17 +172,17 @@ class ParticleFilter(SIS):
 
         Parameters
         ----------
-        initial_proposal: Callable[[int, torch.Tensor], Tuple[torch.Tensor, torch.Tensor]]
+        initial_proposal: Callable[[int, Tensor], Tuple[Tensor, Tensor]]
             A callable object that takes the number of particles and the data/observations at time-step zero and returns an importance sample
             of the posterior, i.e. particle position and log weights.
 
-        resampler: Callable[[torch.Tensor, torch.Tensor], Tuple[torch.Tensor, torch.Tensor, torch.Tensor]]:
+        resampler: Callable[[Tensor, Tensor], Tuple[Tensor, Tensor, Tensor]]:
             The resampling algorithm to use. Takes teh state and log weights at the previous time-step and returns the state and log weights
             after resampling. Resampling algorithms must also return a third tensor. Used to report extra information about how the particles
             were chosen, in most cases the resampled indices; this is often useful for diagnostics. But, this basic implementation discards
             this tensor.
 
-        proposal: Callable[[torch.Tensor, torch.Tensor, torch.Tensor, int], Tuple[torch.Tensor, torch.Tensor]]
+        proposal: Callable[[Tensor, Tensor, Tensor, int], Tuple[Tensor, Tensor]]
             A callable object that implements the proposal kernel. Takes the state and log weights at the previous time step,
             the discreet time index i.e. how many iterations the filter has run for; and the data/observations at the current time-step.
             And returns an importance sample of the posterior at the current time step, i.e. particle position and log weights. For the
@@ -207,8 +207,8 @@ class DPF(ParticleFilter):
     'Differentiable Particle Filters: End-to-End Learning with Algorithmic Priors' 2018.
     """
 
-    def __init__(self, initial_proposal: Callable[[int, torch.Tensor], Tuple[torch.Tensor, torch.Tensor]],
-                 proposal: Callable[[torch.Tensor, torch.Tensor, torch.Tensor, int], Tuple[torch.Tensor, torch.Tensor]],
+    def __init__(self, initial_proposal: Callable[[int, Tensor], Tuple[Tensor, Tensor]],
+                 proposal: Callable[[Tensor, Tensor, Tensor, int], Tuple[Tensor, Tensor]],
                  resampling_generator: torch.Generator = torch.default_generator) -> None:
         """
         Basic 'differentiable' particle filter, as described in R. Jonschkowski, D. Rastogi, O. Brock
@@ -216,10 +216,10 @@ class DPF(ParticleFilter):
 
         Parameters
         ----------
-        initial_proposal: Callable[[int, torch.Tensor], Tuple[torch.Tensor, torch.Tensor]]
+        initial_proposal: Callable[[int, Tensor], Tuple[Tensor, Tensor]]
             Importance sampler for the initial distribution, takes the number of particles and the data at time 0,
             and returns the importance sampled state and weights
-        proposal: Callable[[torch.Tensor, torch.Tensor, torch.Tensor, int], Tuple[torch.Tensor, torch.Tensor]]
+        proposal: Callable[[Tensor, Tensor, Tensor, int], Tuple[Tensor, Tensor]]
             Importance sampler from the proposal kernel, takes the state, weights and data and returns the new states and weights.
         """
         super().__init__(initial_proposal, systematic(resampling_generator), proposal)
@@ -230,8 +230,8 @@ class SoftDPF(ParticleFilter):
     'Particle Filter Networks with Application to Visual Localization' 2018).
     """
 
-    def __init__(self, initial_proposal: Callable[[int, torch.Tensor], Tuple[torch.Tensor, torch.Tensor]],
-                 proposal: Callable[[torch.Tensor, torch.Tensor, torch.Tensor, int], Tuple[torch.Tensor, torch.Tensor]],
+    def __init__(self, initial_proposal: Callable[[int, Tensor], Tuple[Tensor, Tensor]],
+                 proposal: Callable[[Tensor, Tensor, Tensor, int], Tuple[Tensor, Tensor]],
                  softness: float,
                  resampling_generator: torch.Generator = torch.default_generator) -> None:
         """
@@ -239,10 +239,10 @@ class SoftDPF(ParticleFilter):
 
         Parameters
         ----------
-        initial_proposal: Callable[[int, torch.Tensor], Tuple[torch.Tensor, torch.Tensor]]
+        initial_proposal: Callable[[int, Tensor], Tuple[Tensor, Tensor]]
             Importance sampler for the initial distribution, takes the number of particles and the data at time 0,
             and returns the importance sampled state and weights
-        proposal: Callable[[torch.Tensor, torch.Tensor, torch.Tensor, int], Tuple[torch.Tensor, torch.Tensor]]
+        proposal: Callable[[Tensor, Tensor, Tensor, int], Tuple[Tensor, Tensor]]
             Importance sampler from the proposal kernel, takes the state, weights and data and returns the new states and weights.
         softness: float
             The trade-off parameter between a uniform and the usual resampling distribution.
@@ -254,8 +254,8 @@ class OptimalTransportDPF(ParticleFilter):
     Differentiable particle filter with optimal transport resampling (A. Corenflos, J. Thornton, G. Deligiannidis and A. Doucet
     'Differentiable Particle Filtering via Entropy-Regularized Optimal Transport' 2021).
     """
-    def __init__(self, initial_proposal: Callable[[int, torch.Tensor], Tuple[torch.Tensor, torch.Tensor]],
-                 proposal: Callable[[torch.Tensor, torch.Tensor, torch.Tensor, int], Tuple[torch.Tensor, torch.Tensor]],
+    def __init__(self, initial_proposal: Callable[[int, Tensor], Tuple[Tensor, Tensor]],
+                 proposal: Callable[[Tensor, Tensor, Tensor, int], Tuple[Tensor, Tensor]],
                  regularisation: float,
                  step_size: float,
                  min_update_size: float = 0.01,
@@ -267,10 +267,10 @@ class OptimalTransportDPF(ParticleFilter):
 
         Parameters
         ----------
-        initial_proposal: Callable[[int, torch.Tensor], Tuple[torch.Tensor, torch.Tensor]]
+        initial_proposal: Callable[[int, Tensor], Tuple[Tensor, Tensor]]
             Importance sampler for the initial distribution, takes the number of particles and the data at time 0,
             and returns the importance sampled state and weights
-        proposal: Callable[[torch.Tensor, torch.Tensor, torch.Tensor, int], Tuple[torch.Tensor, torch.Tensor]]
+        proposal: Callable[[Tensor, Tensor, Tensor, int], Tuple[Tensor, Tensor]]
             Importance sampler from the proposal kernel, takes the state, weights and data and returns the new states and weights.
         regularisation: float
             The maximum strength of the entropy regularisation, in our implementation regularisation automatically chosen per sample and
@@ -284,25 +284,25 @@ class OptimalTransportDPF(ParticleFilter):
         transport_gradient_clip: float
             The maximum per-element gradient of the transport matrix that should be passed. Higher valued gradients will be clipped to this value.
         """
-        super().__init__(initial_proposal, optimal_transport(regularisation, min_update_size, max_iterations, step_size, transport_gradient_clip), proposal)
+        super().__init__(initial_proposal, optimal_transport(regularisation, step_size, min_update_size, max_iterations, transport_gradient_clip), proposal)
 
 class StopGradientDPF(ParticleFilter):
     """
     Differentiable particle filter with stop-gradient resampling (A. Scibor and F. Wood
     'Differentiable Particle Filtering without Modifying the Forward Pass' 2021).
     """
-    def __init__(self, initial_proposal: Callable[[int, torch.Tensor], Tuple[torch.Tensor, torch.Tensor]],
-                 proposal: Callable[[torch.Tensor, torch.Tensor, torch.Tensor, int], Tuple[torch.Tensor, torch.Tensor]],
+    def __init__(self, initial_proposal: Callable[[int, Tensor], Tuple[Tensor, Tensor]],
+                 proposal: Callable[[Tensor, Tensor, Tensor, int], Tuple[Tensor, Tensor]],
                  resampling_generator: torch.Generator = torch.default_generator) -> None:
         """
         Differentiable particle filter with stop-gradient resampling.
 
         Parameters
         ----------
-        initial_proposal: Callable[[int, torch.Tensor], Tuple[torch.Tensor, torch.Tensor]]
+        initial_proposal: Callable[[int, Tensor], Tuple[Tensor, Tensor]]
             Importance sampler for the initial distribution, takes the number of particles and the data at time 0,
             and returns the importance sampled state and weights
-        proposal: Callable[[torch.Tensor, torch.Tensor, torch.Tensor, int], Tuple[torch.Tensor, torch.Tensor]]
+        proposal: Callable[[Tensor, Tensor, Tensor, int], Tuple[Tensor, Tensor]]
             Importance sampler from the proposal kernel, takes the state, weights and data and returns the new states and weights.
         """
         super().__init__(initial_proposal, stop_gradient(resampling_generator), proposal)

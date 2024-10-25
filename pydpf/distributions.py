@@ -1,4 +1,4 @@
-from .base import Module
+from .base import Module, cached_property, constrained_parameter
 from abc import ABCMeta, abstractmethod
 from typing import Union, Tuple, Iterable
 import torch
@@ -32,6 +32,8 @@ The sample() method samples from the distribution
 
 
 class Distribution(Module, metaclass=ABCMeta):
+    conditional = False
+
 
     class GradientEstimator(StrEnum):
         reparameterisation = 'reparameterisation'
@@ -48,9 +50,11 @@ class Distribution(Module, metaclass=ABCMeta):
 
     def __init__(self, device: Union[str, torch.device], gradient_estimator: str, generator: Union[torch.Generator, None], *args, **kwargs) -> None:
         super().__init__()
+        self.reparameterisable = False
         self.generator = generator
         self.grad_est = self.GradientEstimator(gradient_estimator)
         self.device = device
+        self.dim = 0
 
     def __call__(self, *args, **kwargs) -> None:
         # Do not implement a forward method for a Distribution
@@ -64,12 +68,13 @@ class Distribution(Module, metaclass=ABCMeta):
     def _sample(self, *args, **kwargs) -> Tensor:
         raise NotImplementedError('Sampling not implemented for this distribution')
 
-
     def sample(self, *args, **kwargs) -> Tensor:
         output = self._sample(*args, **kwargs)
-        if self.training or self.grad_est == self.GradientEstimator.none:
+        if not self.training or self.grad_est == self.GradientEstimator.none or not torch.is_grad_enabled():
             return output.detach()
         if self.grad_est == self.GradientEstimator.reparameterisation:
+            if not self.reparameterisable:
+                raise ValueError(f'No reparameterisation method exists for this distribution, {type(self)}.\nTry a score based gradient estimator or running without gradient.')
             return output
         if self.grad_est == self.GradientEstimator.score:
             log_dens = self.log_density(output, *args, **kwargs)
@@ -79,40 +84,31 @@ class Distribution(Module, metaclass=ABCMeta):
     def log_density(self, *args, **kwargs) -> Tensor:
         raise NotImplementedError('Density/Mass function not implemented for this distribution')
 
-    def set_generator(self, generator: Union[torch.Generator, None]):
-        self.generator = generator
-        self.update()
-
-    def set_gradient_estimator(self, gradient_estimator: str):
-        self.grad_est = self.GradientEstimator(gradient_estimator)
-        self.update()
-
-    def set_device(self, device):
-        self.device = device
-        self.to(self.device)
-        self.update()
-
 
 class MultivariateGaussian(Distribution):
+    conditional = False
 
     half_log_2pi = 1/2 * torch.log(torch.tensor(2*torch.pi))
 
     def __init__(self, device: Union[str, torch.device], gradient_estimator: str, generator: Union[None, torch.Generator],  mean: Tensor, cholesky_covariance: Tensor) -> None:
         super().__init__(device, gradient_estimator, generator)
+        self.reparameterisable = True
         self.mean = mean
-        self.cholesky_covariance = cholesky_covariance
-        self._update()
+        self.cholesky_covariance_ = cholesky_covariance
+        self.dim = mean.size(-1)
 
-    def _update(self):
-        with torch.no_grad():
-            self.cholesky_covariance.data = torch.tril(self.cholesky_covariance)
-            self.cholesky_covariance.diagonal().mul_(self.cholesky_covariance.diagonal().sign())
-        self.inv_cholesky_cov, _ = torch.linalg.inv_ex(self.cholesky_covariance)
-        _, self.half_log_det_cov = torch.linalg.slogdet(self.inv_cholesky_cov)
+    @constrained_parameter
+    def cholesky_covariance(self) -> Tuple[Tensor, Tensor]:
+        tril = torch.tril(self.cholesky_covariance_)
+        return self.cholesky_covariance_, tril * tril.diagonal().sign()
 
-    def update(self):
-        super().update()
-        self._update()
+    @cached_property
+    def inv_cholesky_cov(self):
+        return torch.linalg.inv_ex(self.cholesky_covariance)[0]
+
+    @cached_property
+    def half_log_det_cov(self):
+        return torch.linalg.slogdet(self.cholesky_covariance)[1]
 
     def _sample(self, sample_size: Union[Tuple[int, ...], None] = None) -> Tensor:
         if sample_size is None:
@@ -129,20 +125,19 @@ class MultivariateGaussian(Distribution):
         exponent = -1/2 * torch.sum((residuals @ self.inv_cholesky_cov.T)**2, dim=-1)
         return prefactor + exponent
 
-    def set_mean(self, mean: Tensor) -> None:
-        self.mean.data = mean.data
-
-    def set_cholesky_covariance(self, cholesky_covariance: Tensor) -> None:
-        self.cholesky_covariance.data = cholesky_covariance.data
-        self._update()
-
 
 class LinearGaussian(Distribution):
+    conditional = False
+
     def __init__(self, device: Union[str, torch.device], gradient_estimator: str, generator: Union[torch.Generator, None], weight: Tensor, bias: Tensor, cholesky_covariance: Tensor) -> None:
         super().__init__(device, gradient_estimator, generator)
         self.weight = weight
         self.bias = bias
-        self.dist = MultivariateGaussian(device, gradient_estimator, generator, mean = torch.zeros((self.weight.size(-1),), device = self.weight.device), cholesky_covariance=cholesky_covariance)
+        self.dim = self.weight.size(-1)
+        self.reparameterisable = True
+
+        self.dist = MultivariateGaussian(device, gradient_estimator, generator, mean = torch.zeros((self.dim,), device = self.weight.device), cholesky_covariance=cholesky_covariance)
+
 
     def set_weight(self, weight: Tensor) -> None:
         self.weight.data = weight.data
@@ -167,15 +162,28 @@ class LinearGaussian(Distribution):
         return self.dist.log_density(sample - self._unsqueeze_to_size(means, sample))
 
 
-#class CompoundDistribution(Distribution):
+class CompoundDistribution(Distribution):
     '''
-        Class for when the desired random variable can be expressed as a set of independent components
+        Class for when the desired random variable can be expressed as a set of independent components.
+        Primarily included to allow kernels that have different distributions along different dimensions.
     '''
-#    def __init__(self, device: Union[str, torch.device], gradient_estimator: str, generator: Union[torch.Generator, None], distributions: Iterable[Distribution]):
-#        super().__init__(device, gradient_estimator, generator)
-#        self.dists = distributions
+    conditional = False
 
-#    def _sample(self, *args, **kwargs) -> Tensor:
+    def __init__(self, device: Union[str, torch.device], gradient_estimator: str, generator: Union[torch.Generator, None], distributions: Iterable[Distribution]):
+        super().__init__(device, gradient_estimator, generator)
+        self.dists = distributions
+        for dist in self.dists:
+            if type(dist).conditional:
+                raise TypeError(f'None of the component distributions may be conditional, detected {type(dist)} which is.')
+
+    def _sample(self, sample_size: Union[Tuple[int], None]) -> Tensor:
+        samples = []
+        for dist in self.dists:
+            samples.append(dist.sample(sample_size))
+        return torch.cat(samples, dim=-1)
+
+    def log_density(self, sample: Tensor, condition_on: Tensor) -> Tensor:
+        pass
 
 
 
@@ -183,11 +191,16 @@ class KernelMixture(Distribution):
     '''
         Class for KDE mixtures.
     '''
+    conditional = True
 
     def __init__(self, device: Union[str, torch.device], gradient_estimator: str, generator: Union[torch.Generator, None], kernel: Distribution):
         super().__init__(device, gradient_estimator, generator)
         self.kernel = kernel
+        self.reparameterisable = False
+        self.dim = self.kernel.dim
         self.mn_sampler = multinomial(self.generator)
+        if type(self.kernel).conditional:
+            raise TypeError(f'The kernel distribution cannot be conditional, detected {type(self.kernel)} which is.')
 
     def _sample(self, sample_size: Union[Tuple[int], None], loc: Tensor, weight: Tensor) -> Tensor:
         #Multinomial resampling is sampling from a KDE with a dirac kernel.

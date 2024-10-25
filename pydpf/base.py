@@ -23,6 +23,7 @@ class Module(TorchModule, metaclass=ABCMeta):
     """
 
     def __init__(self):
+        self.updatable = True
         self.cached_properties = {}
         self.constrained_parameters = {}
         for attr, v in self.__class__.__dict__.items():
@@ -42,29 +43,39 @@ class Module(TorchModule, metaclass=ABCMeta):
             self.constrained_parameters[key] = value
         super().__setattr__(key, value)
 
-
-    def update(self):
-        for child in self.children():
-            if isinstance(child, Module):
-                child.update()
+    def _update(self):
         for name, property in self.cached_properties.items():
             property._update()
         for name, property in self.constrained_parameters.items():
             property._update(self)
 
+    def update(self):
+        self._update()
+        for child in self.modules():
+            child._update()
 
 class constrained_parameter:
     def __init__(self, function: Callable[[Module], Tuple[Tensor, Tensor]]):
         self.function = function
         functools.update_wrapper(self, function)
         self.value = None
+        self.i_value = None
 
     def __get__(self, instance: Module, owner: Any) -> Tensor:
+        if torch.is_inference_mode_enabled():
+            if self.i_value is None:
+                self.i_value = self.function(instance)[1]
+            return self.i_value
+
         if self.value is None:
             self._update(instance)
         return self.value
 
     def _update(self, instance: Module) -> None:
+        if torch.is_inference_mode_enabled():
+            self.i_value = None
+            return
+
         with torch.no_grad():
             d = self.function(instance)
             d[0].data = d[1].data

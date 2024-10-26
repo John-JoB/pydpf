@@ -14,18 +14,26 @@ class Module(TorchModule, metaclass=ABCMeta):
     We provide two new function decorators, 'constrained_parameter' and 'cached_property'.
     Both are used to store functions of module parameters that are expensive to compute so it is undesirable to recalculate them everytime
     they are used.
+    These provide similar functionality to pytorch's parameterization API, but with simpler to use for code that has a lot of custom modules.
 
     @cached_property is used to store any intermediate value, for example the inverse of a covariance matrix. Gradient is freely passed through
     the computation of a cached_property.
 
-    @constrained_parameter should be used to impose constraints only, the underlying data is modified inplace and without gradient. This
-    provides similar functionality to pytorch's Paramatarisations API but simpler.
+    @constrained_parameter should be used to impose constraints only, the underlying data is modified inplace and without gradient.
+
+    Notes
+    -----
+    A use case not covered by @cached_property and @constrained_parameter, is if the wrapped function should be computed out-of-place, such as to
+    allow gradient tracking, but appear as if the change is made in-place. I.e. we want to modify a parameter from a function declared outside the
+    module to which it belongs, and pass gradient through this map. This is the intended use case of the torch.parameterization API so use that
+    instead.
     """
 
     def __init__(self):
         self.updatable = True
         self.cached_properties = {}
         self.constrained_parameters = {}
+        #Need to iterate over __class__.__dict__ rather than dir(self) to by pass getattr()
         for attr, v in self.__class__.__dict__.items():
             if isinstance(v, cached_property):
                 self.cached_properties[attr] = v
@@ -50,40 +58,73 @@ class Module(TorchModule, metaclass=ABCMeta):
             property._update(self)
 
     def update(self):
+        """
+        Update all constrained_parameters and cached_properties belonging to this Module.
+        """
         self._update()
+        if torch.is_inference_mode_enabled():
+            #raise RuntimeError('Cannot update module in inference mode.')
+            pass
         for child in self.modules():
             child._update()
 
 class constrained_parameter:
+
+
     def __init__(self, function: Callable[[Module], Tuple[Tensor, Tensor]]):
+        """
+            Wrapper for constraining parameters.
+            The wrapped function must belong to a Module and should take only a reference to its parent Module and return a reference to the original
+            parameter and a tensor containing the new value.
+
+            constrained_parameter applies the change in-place; the underlying data of the parameter is modified. Necessarily, therefore this is
+            done without gradient tracking.
+
+            The constraint is applied on calling Module.update(), so you should do this after every gradient update to preserve the constraint.
+
+            Notes
+            -----
+            constrained_parameters can be applied to any parameter accessible from a Module including as attributes of a child Module.
+            This is safe as the parameter is changed in-place.
+        """
         self.function = function
         functools.update_wrapper(self, function)
         self.value = None
-        self.i_value = None
 
     def __get__(self, instance: Module, owner: Any) -> Tensor:
-        if torch.is_inference_mode_enabled():
-            if self.i_value is None:
-                self.i_value = self.function(instance)[1]
-            return self.i_value
-
         if self.value is None:
+            if torch.is_inference_mode_enabled():
+                #raise RuntimeError('Attempting to access an uninitialised constrained parameter inside inference mode. \n Try calling Module.update() outside inference mode.')
+                pass
             self._update(instance)
         return self.value
 
     def _update(self, instance: Module) -> None:
-        if torch.is_inference_mode_enabled():
-            self.i_value = None
-            return
+        #Changing tensors in place inside inference mode can cause runtime errors.
+        @torch.inference_mode(mode=False)
+        def f():
+            with torch.no_grad():
+                d = self.function(instance)
+                d[0].data = d[1].data
+                self.value = d[0]
+        f()
 
-        with torch.no_grad():
-            d = self.function(instance)
-            d[0].data = d[1].data
-        self.value = d[0]
+    def __set__(self):
+        raise AttributeError("Cannot directly set a constrained parameter.")
 
 
 class cached_property:
     def __init__(self, function: Callable):
+        """
+            Wrapper for caching functions of parameters.
+            The wrapped function must belong to a Module and should take only a reference to its parent Module and tensor containing the new value
+            that will be stored.
+
+            cached_property applies its map out-of-place, creating a new tensor. Gradient tracking is permitted through the map.
+
+            The cached_property is calculated lazily; when it is first accessed it is calculated and cached.
+            Calling Module.update() resets the value so that it will be recomputed on next access.
+        """
         self.function = function
         functools.update_wrapper(self, function)
         self.value = None
@@ -95,3 +136,6 @@ class cached_property:
 
     def _update(self):
         self.value = None
+
+    def __set__(self, instance):
+        raise AttributeError("Cannot directly set a cached property, update the underlying data instead.")

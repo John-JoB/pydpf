@@ -1,5 +1,10 @@
 import torch
 from typing import Tuple
+from types import FunctionType
+from functools import update_wrapper
+
+from IPython.extensions.autoreload import update_function
+from joblib.externals.cloudpickle import instance
 
 
 def batched_select(tensor: torch.Tensor, index: torch.Tensor) -> torch.Tensor:
@@ -86,3 +91,35 @@ def multiple_unsqueeze(tensor: torch.Tensor, n: int, dim: int = -1) -> torch.Ten
     if n == 0:
         return tensor
     return tensor[(slice(None),) * dim + (None, ) * n]
+
+class doc_function():
+    """
+        Reflection hack to allow functions that only define a docstring.
+    """
+
+    def __init__(self, fun):
+        """
+            Mark an overriding function as docstring only. I.e. the function will default to it's parent's implementation at runtime.
+        """
+        self.fun = fun
+        self.name = fun.__name__
+        update_wrapper(self, fun)
+
+    def update_function(self, instance, owner, overrides : FunctionType):
+        setattr(owner, self.name, overrides)
+        if instance is not None:
+            return getattr(instance, self.name)
+        #For static methods
+        return getattr(owner, self.name)
+
+    def __get__(self, instance, owner):
+        if owner is None:
+            raise RuntimeError(f'Attempting to use doc_function outside of a class.')
+        bases = owner.__mro__
+        for base in bases[1:]:
+            try:
+                overrides = base.__dict__[self.name]
+                return self.update_function(instance, owner, overrides)
+            except KeyError:
+                pass
+        raise AttributeError(f'Base classes have no attribute {self.name}.')

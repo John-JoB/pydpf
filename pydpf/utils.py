@@ -92,7 +92,8 @@ def multiple_unsqueeze(tensor: torch.Tensor, n: int, dim: int = -1) -> torch.Ten
         return tensor
     return tensor[(slice(None),) * dim + (None, ) * n]
 
-class doc_function():
+
+class doc_function:
     """
         Reflection hack to allow functions that only define a docstring.
     """

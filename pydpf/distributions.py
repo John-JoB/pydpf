@@ -4,8 +4,7 @@ from typing import Union, Tuple, Iterable
 import torch
 from torch import Tensor
 from enum import StrEnum
-from .resampling import multinomial
-from .utils import multiple_unsqueeze, doc_function
+from .utils import multiple_unsqueeze, doc_function, batched_select
 
 """
 Module to contain implementations of commonly utilised distributions.
@@ -92,6 +91,8 @@ class Distribution(Module, metaclass=ABCMeta):
         self.device = None
         self.reparameterisable = False
         self.generator = generator
+        if self.generator is None:
+            self.generator = torch.default_generator
         try:
             self.grad_est = self.GradientEstimator(gradient_estimator)
         except ValueError:
@@ -132,7 +133,7 @@ class MultivariateGaussian(Distribution):
 
     half_log_2pi = 1/2 * torch.log(torch.tensor(2*torch.pi))
 
-    def __init__(self, mean: Tensor, cholesky_covariance: Tensor, gradient_estimator: str, generator: Union[None, torch.Generator]) -> None:
+    def __init__(self, mean: Tensor, cholesky_covariance: Tensor, diagonal_cov:bool = False, gradient_estimator: str = 'reparameterisation', generator: Union[None, torch.Generator] = None) -> None:
         """
             A multivariate Gaussian distribution.
 
@@ -143,8 +144,10 @@ class MultivariateGaussian(Distribution):
             cholesky_covariance: Tensor
                 2D tensor specifying the (lower) Cholesky decomposition of the covariance matrix. If the upper triangular section has non-zero
                 values these will be ignored.
+            diagonal_cov: bool
+                Whether to constrain the covariance to be diagonal. Default is False.
             gradient_estimator : str
-                The gradient estimator to use.
+                The gradient estimator to use, one of 'reparameterisation', 'score' or 'none'. Default is 'reparameterisation'.
             generator : Union[torch.Generator, None]
                 The generator to control the rng when sampling kernels from the mixture.
         """
@@ -153,6 +156,7 @@ class MultivariateGaussian(Distribution):
         self.reparameterisable = True
         self.mean = mean
         self.cholesky_covariance_ = cholesky_covariance
+        self.diagonal_cov = diagonal_cov
         self.dim = mean.size(0)
         self.device = mean.device
         if cholesky_covariance.device != mean.device:
@@ -162,8 +166,11 @@ class MultivariateGaussian(Distribution):
 
     @constrained_parameter
     def cholesky_covariance(self) -> Tuple[Tensor, Tensor]:
+        diag = torch.diag(self.cholesky_covariance_.diag())
+        if self.diagonal_cov:
+            return  self.cholesky_covariance_,  diag * diag.sign()
         tril = torch.tril(self.cholesky_covariance_)
-        return self.cholesky_covariance_, tril * tril.diagonal().sign()
+        return self.cholesky_covariance_, tril * diag.sign()
 
     @cached_property
     def inv_cholesky_cov(self):
@@ -238,7 +245,7 @@ class LinearGaussian(Distribution):
                 2D tensor specifying the (lower) Cholesky decomposition of the covariance matrix. If the upper triangular section has non-zero
                 values these will be ignored.
             gradient_estimator : str
-                The gradient estimator to use.
+                The gradient estimator to use, one of 'reparameterisation', 'score' or 'none'.
             generator : Union[torch.Generator, None]
                 The generator to control the rng when sampling kernels from the mixture.
         """
@@ -257,7 +264,7 @@ class LinearGaussian(Distribution):
             raise ValueError(f'Weight and Covariance should be on the same device, found {self.device} and {cholesky_covariance.device}')
         if cholesky_covariance.device != self.device:
             raise ValueError(f'Weight and bias should be on the same device, found {self.device} and {bias.device}')
-        self.dist = MultivariateGaussian(torch.zeros((self.dim,), device = self.device), cholesky_covariance, gradient_estimator, generator)
+        self.dist = MultivariateGaussian(torch.zeros((self.dim,), device = self.device), cholesky_covariance, False, gradient_estimator, generator)
 
     def set_cholesky_covariance(self, cholesky_covariance: Tensor) -> None:
         self.dist.set_cholesky_covariance(cholesky_covariance)
@@ -344,7 +351,7 @@ class CompoundDistribution(Distribution):
         distributions: Iterable[Distribution]
             An iterable of the distributions that form the components of the compound.
         gradient_estimator : str
-            The gradient estimator to use.
+            The gradient estimator to use, one of 'reparameterisation', 'score' or 'none'.
         generator : Union[torch.Generator, None]
             The generator to control the rng when sampling kernels from the mixture.
         """
@@ -412,6 +419,11 @@ class CompoundDistribution(Distribution):
         return output
 
 
+def sample_only_multinomial(state: Tensor, weights: Tensor, generator) -> Tensor:
+    with torch.no_grad():
+        sampled_indices = torch.multinomial(torch.exp(weights), weights.size(1), replacement=True, generator=generator).detach()
+    return batched_select(state, sampled_indices)
+
 
 class KernelMixture(Distribution):
     '''
@@ -430,7 +442,7 @@ class KernelMixture(Distribution):
         kernel: Distribution
             The kernel to use.
         gradient_estimator : str
-            The gradient estimator to use.
+            The gradient estimator to use, one of 'reparameterisation', 'score' or 'none'.
         generator : Union[torch.Generator, None]
             The generator to control the rng when sampling kernels from the mixture.
         """
@@ -480,10 +492,10 @@ class KernelMixture(Distribution):
         #Multinomial resampling is sampling from a KDE with a dirac kernel.
         self._check_conditions(loc, weight)
         try:
-            sampled_locs, _, _ = self.mn_sampler(loc, weight)
+            sampled_locs = sample_only_multinomial(loc, weight, generator=self.generator)
         except Exception as e:
             raise RuntimeError(f'Failed to sample kernels with error: \n {e} \n This is likely due to a mismatch in batch dimensions.')
-        batch_size = self.get_batch_size(sampled_locs, 1)
+        batch_size = self.get_batch_size(sampled_locs.size(), 1)
         if sample_size is None:
             sample = self.kernel._sample(sample_size=batch_size)
         else:

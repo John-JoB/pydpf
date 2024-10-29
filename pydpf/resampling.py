@@ -13,8 +13,8 @@ parameters, so the returned object is a simple python function, but if it does t
 import torch
 from torch import Tensor
 from typing import Tuple, Any, Callable
-
 from .utils import batched_select
+from .distributions import KernelMixture, Distribution
 
 def multinomial(generator: torch.Generator) -> Callable[[Tensor, Tensor], Tuple[Tensor, Tensor, Tensor]]:
     '''
@@ -167,9 +167,13 @@ def stop_gradient(generator: torch.Generator):
     '''
     _systematic = systematic(generator=generator)
     def _stop_gradient(state: Tensor, weight: Tensor):
-        state, _, sampled_indices = _systematic(state, weight)
-        resampled_weights = batched_select(weight, sampled_indices)
-        return state, resampled_weights - resampled_weights.detach(), sampled_indices
+        state, no_grad_weights, sampled_indices = _systematic(state, weight)
+        #Save computation if gradient is not required
+        if torch.is_grad_enabled():
+            resampled_weights = batched_select(weight, sampled_indices)
+            return state, resampled_weights - resampled_weights.detach(), sampled_indices
+        else:
+            return state, no_grad_weights, sampled_indices
     return _stop_gradient
 
 def diameter(x: Tensor):
@@ -451,4 +455,18 @@ def optimal_transport(regularisation: float, step_size: float, min_update_size: 
         return apply_transport(state, transport, N), torch.zeros_like(weights), transport
     return _optimal_transport
 
+
+def kernel_resampling(kernel: Distribution, generator: torch.Generator):
+    mixture = KernelMixture(kernel, gradient_estimator='none',generator=generator)
+    def kernel_resampling_(state: Tensor, weights: Tensor) -> Tuple[Tensor, Tensor, Tensor]:
+        new_state = mixture.sample(state, weights, sample_size=state.size(1))
+        # Save computation if gradient is not required
+        if torch.is_grad_enabled():
+            density = mixture.log_density(new_state, state, weights)
+            new_weights = density - density.detach()
+        else:
+            new_weights = torch.zeros_like(weights)
+        return new_state, new_weights, None
+
+    return kernel_resampling_
 

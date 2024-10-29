@@ -1,9 +1,12 @@
-from typing import Callable, Tuple
+from typing import Callable, Tuple, Union
 import torch
 from torch import Tensor
+
+from . import diameter
 from .utils import normalise
 from .base import Module
-from .resampling import systematic, soft, optimal_transport, stop_gradient
+from .resampling import systematic, soft, optimal_transport, stop_gradient, kernel_resampling, diameter
+from distributions import KernelMixture
 
 '''
 Python module for the core filtering algorithms. 
@@ -306,3 +309,29 @@ class StopGradientDPF(ParticleFilter):
             Importance sampler from the proposal kernel, takes the state, weights and data and returns the new states and weights.
         """
         super().__init__(initial_proposal, stop_gradient(resampling_generator), proposal)
+
+'''
+
+class KernelDPF(ParticleFilter):
+
+    def __init__(self, initial_proposal: Callable[[int, Tensor], Tuple[Tensor, Tensor]],
+                 proposal: Callable[[Tensor, Tensor, Tensor, int], Tuple[Tensor, Tensor]],
+                 kernel: Union[Tuple[str, int], KernelMixture],
+                 resampling_generator: torch.Generator = torch.default_generator) -> None:
+        if isinstance(kernel, KernelMixture):
+            super().__init__(initial_proposal, kernel_resampling(kernel, resampling_generator), proposal)
+            return 
+        
+        if len(kernel) == 1:
+            
+        for subkernel in kernel:
+            
+
+    def forward(self, data: Tensor,
+                n_particles: int,
+                time_extent: int,
+                aggregation_function: Callable[[Tensor, Tensor, Tensor, Tensor, int], Tensor]) -> Tensor:
+        if self.kernel == 'Gaussian':
+            cov = torch.diag(torch.mean(torch.std(data, dim=1), dim=0))
+
+'''

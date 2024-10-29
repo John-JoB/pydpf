@@ -90,6 +90,8 @@ def multiple_unsqueeze(tensor: torch.Tensor, n: int, dim: int = -1) -> torch.Ten
     """
     if n == 0:
         return tensor
+    if dim < 0:
+        dim = tensor.dim() + dim
     return tensor[(slice(None),) * dim + (None, ) * n]
 
 

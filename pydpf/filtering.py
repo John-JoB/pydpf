@@ -1,12 +1,10 @@
-from typing import Callable, Tuple, Union
+from typing import Callable, Tuple, Union, List
 import torch
 from torch import Tensor
-
-from . import diameter
 from .utils import normalise
 from .base import Module
-from .resampling import systematic, soft, optimal_transport, stop_gradient, kernel_resampling, diameter
-from distributions import KernelMixture
+from .resampling import systematic, soft, optimal_transport, stop_gradient, kernel_resampling
+from .distributions import KernelMixture, Distribution, MultivariateGaussian, CompoundDistribution
 
 '''
 Python module for the core filtering algorithms. 
@@ -310,28 +308,26 @@ class StopGradientDPF(ParticleFilter):
         """
         super().__init__(initial_proposal, stop_gradient(resampling_generator), proposal)
 
-'''
+
 
 class KernelDPF(ParticleFilter):
 
+    def make_kernel(self, kernel: str, dim = 0, generator: torch.Generator = torch.default_generator) -> Distribution:
+        device = generator.device
+        if not kernel == 'Gaussian':
+            raise NotImplementedError('Only Gaussian kernels are implemented for automatic generation.')
+        cov = torch.nn.Parameter(torch.eye(dim, device = device) * torch.rand(dim, device=device, generator=generator))
+        return MultivariateGaussian(torch.zeros(dim, device=device), cov, generator=generator, gradient_estimator='none', diagonal_cov=True)
+
     def __init__(self, initial_proposal: Callable[[int, Tensor], Tuple[Tensor, Tensor]],
                  proposal: Callable[[Tensor, Tensor, Tensor, int], Tuple[Tensor, Tensor]],
-                 kernel: Union[Tuple[str, int], KernelMixture],
+                 kernel: Union[List[Tuple[str, int]], KernelMixture],
                  resampling_generator: torch.Generator = torch.default_generator) -> None:
         if isinstance(kernel, KernelMixture):
-            super().__init__(initial_proposal, kernel_resampling(kernel, resampling_generator), proposal)
-            return 
-        
-        if len(kernel) == 1:
-            
-        for subkernel in kernel:
-            
-
-    def forward(self, data: Tensor,
-                n_particles: int,
-                time_extent: int,
-                aggregation_function: Callable[[Tensor, Tensor, Tensor, Tensor, int], Tensor]) -> Tensor:
-        if self.kernel == 'Gaussian':
-            cov = torch.diag(torch.mean(torch.std(data, dim=1), dim=0))
-
-'''
+            pass
+        elif len(kernel) == 1:
+            kernel = self.make_kernel(kernel[0][0], kernel[0][1], resampling_generator)
+        else:
+            subkernels = [self.make_kernel(subkernel[0], subkernel[1], resampling_generator) for subkernel in kernel]
+            kernel = CompoundDistribution(subkernels, gradient_estimator='none', generator=resampling_generator)
+        super().__init__(initial_proposal, kernel_resampling(kernel, resampling_generator), proposal)

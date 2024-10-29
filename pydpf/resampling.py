@@ -15,6 +15,7 @@ from torch import Tensor
 from typing import Tuple, Any, Callable
 from .utils import batched_select
 from .distributions import KernelMixture, Distribution
+from .base import Module
 
 def multinomial(generator: torch.Generator) -> Callable[[Tensor, Tensor], Tuple[Tensor, Tensor, Tensor]]:
     '''
@@ -456,17 +457,18 @@ def optimal_transport(regularisation: float, step_size: float, min_update_size: 
     return _optimal_transport
 
 
-def kernel_resampling(kernel: Distribution, generator: torch.Generator):
-    mixture = KernelMixture(kernel, gradient_estimator='none',generator=generator)
-    def kernel_resampling_(state: Tensor, weights: Tensor) -> Tuple[Tensor, Tensor, Tensor]:
-        new_state = mixture.sample(state, weights, sample_size=state.size(1))
+class kernel_resampling(Module):
+
+    def __init__(self, kernel: Distribution, generator: torch.Generator):
+        super().__init__()
+        self.mixture = KernelMixture(kernel, gradient_estimator='none',generator=generator)
+
+    def forward(self, state: Tensor, weights: Tensor) -> Tuple[Tensor, Tensor, Tensor]:
+        new_state = self.mixture.sample(state, weights, sample_size=(state.size(1),))
         # Save computation if gradient is not required
         if torch.is_grad_enabled():
-            density = mixture.log_density(new_state, state, weights)
+            density = self.mixture.log_density(new_state, state, weights)
             new_weights = density - density.detach()
         else:
             new_weights = torch.zeros_like(weights)
         return new_state, new_weights, None
-
-    return kernel_resampling_
-

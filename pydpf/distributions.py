@@ -359,6 +359,8 @@ class CompoundDistribution(Distribution):
         self.dists = distributions
         self.reparameterisable = True
         self.dim = 0
+        #register submodules
+        self.dists = torch.nn.ModuleList(distributions)
         self.device = None
         for dist in self.dists:
             self.dim += dist.dim
@@ -451,7 +453,6 @@ class KernelMixture(Distribution):
         self.reparameterisable = False
         self.dim = self.kernel.dim
         self.device = kernel.device
-        self.mn_sampler = multinomial(self.generator)
         if type(self.kernel).conditional:
             raise ValueError(f'The kernel distribution cannot be conditional, detected {type(self.kernel)} which is.')
 
@@ -495,12 +496,12 @@ class KernelMixture(Distribution):
             sampled_locs = sample_only_multinomial(loc, weight, generator=self.generator)
         except Exception as e:
             raise RuntimeError(f'Failed to sample kernels with error: \n {e} \n This is likely due to a mismatch in batch dimensions.')
-        batch_size = self.get_batch_size(sampled_locs.size(), 1)
+        batch_size = self.get_batch_size(sampled_locs.size(), 2)
         if sample_size is None:
             sample = self.kernel._sample(sample_size=batch_size)
         else:
             sample = self.kernel._sample(sample_size=(*batch_size, *sample_size))
-        return loc + sample
+        return sampled_locs + sample
 
     def log_density(self, sample: Tensor, loc: Tensor, weight: Tensor) -> Tensor:
         """
@@ -525,6 +526,6 @@ class KernelMixture(Distribution):
         self._check_conditions(loc, weight)
         try:
             densities = self.kernel.log_density(sample.unsqueeze(-2) - self._unsqueeze_to_size(loc, sample.unsqueeze(-2), 2))
-            return torch.logsumexp(densities + weight, dim=-1)
+            return torch.logsumexp(densities + weight.unsqueeze(-1), dim=-1)
         except RuntimeError as e:
             raise RuntimeError(f'Failed to apply condition with error: \n {e} \n This is likely to a mismatch in batch dimensions.')

@@ -323,6 +323,25 @@ class KernelDPF(ParticleFilter):
                  proposal: Callable[[Tensor, Tensor, Tensor, int], Tuple[Tensor, Tensor]],
                  kernel: Union[List[Tuple[str, int]], KernelMixture],
                  resampling_generator: torch.Generator = torch.default_generator) -> None:
+        """
+            Differentiable particle filter with mixture kernel resampling (Younis and Sudderth 'Differentiable and Stable Long-Range Tracking of Multiple Posterior Modes' 2024).
+
+            Notes
+            -----
+            The parameter kernel can either be a valid KernelMixture or a recipe for creating one. The recipe can be
+
+            Parameters
+            ----------
+            kernel: Distribution
+                The kernel to convolve over the particles to form the KDE sampling distribution.
+            generator: torch.Generator
+                The generator to track the random state of the resampling process.
+
+            Returns
+            -------
+            kernel_resampler: Callable[[Tensor, Tensor], Tuple[Tensor, Tensor, Tensor]]:
+                A Module whose forward method implements kernel resampling.
+        """
         if isinstance(kernel, KernelMixture):
             pass
         elif len(kernel) == 1:

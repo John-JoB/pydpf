@@ -53,7 +53,7 @@ class Module(TorchModule, metaclass=ABCMeta):
 
     def _update(self):
         for name, property in self.cached_properties.items():
-            property._update()
+            property._update(self)
         for name, property in self.constrained_parameters.items():
             property._update(self)
 
@@ -89,15 +89,12 @@ class constrained_parameter:
         """
         self.function = function
         functools.update_wrapper(self, function)
-        self.value = None
+        self.value_name = f'{self.function.__name__}_value'
 
     def __get__(self, instance: Module, owner: Any) -> Tensor:
-        if self.value is None:
-            if torch.is_inference_mode_enabled():
-                #raise RuntimeError('Attempting to access an uninitialised constrained parameter inside inference mode. \n Try calling Module.update() outside inference mode.')
-                pass
+        if not hasattr(instance, self.value_name):
             self._update(instance)
-        return self.value
+        return getattr(instance, self.value_name)
 
     def _update(self, instance: Module) -> None:
         #Changing tensors in place inside inference mode can cause runtime errors.
@@ -105,9 +102,9 @@ class constrained_parameter:
         def f():
             with torch.no_grad():
                 d = self.function(instance)
-                d[0].data = d[1].data
-                self.value = d[0]
-        f()
+                d[0].sub_(d[0]).add_(d[1])
+            return d[0]
+        setattr(instance, self.value_name, f())
 
     def __set__(self):
         raise AttributeError("Cannot directly set a constrained parameter.")
@@ -127,15 +124,16 @@ class cached_property:
         """
         self.function = function
         functools.update_wrapper(self, function)
-        self.value = None
+        self.value_name = f'{self.function.__name__}_value'
 
     def __get__(self, instance, owner):
-        if self.value is None:
-            self.value = self.function(instance)
-        return self.value
+        if not hasattr(instance, self.value_name):
+            setattr(instance, self.value_name, self.function(instance))
+        return getattr(instance, self.value_name)
 
-    def _update(self):
-        self.value = None
+    def _update(self, instance):
+        if hasattr(instance, self.value_name):
+            delattr(instance, self.value_name)
 
     def __set__(self, instance):
         raise AttributeError("Cannot directly set a cached property, update the underlying data instead.")

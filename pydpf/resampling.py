@@ -389,7 +389,7 @@ def sinkhorn_loop(log_a: Tensor, log_b: Tensor, cost: Tensor, epsilon: float, th
 
 
 def optimal_transport(regularisation: float, step_size: float, min_update_size: float, max_iterations: int, transport_gradient_clip: float) -> Callable[[Tensor, Tensor], Tuple[Tensor, Tensor, Tensor]]:
-    '''
+    """
     Returns a function for perfoming optimal transport resampling, (A. Corenflos, J. Thornton, G. Deligiannidis and A. Doucet
     'Differentiable Particle Filtering via Entropy-Regularized Optimal Transport' 2021)
 
@@ -432,14 +432,14 @@ def optimal_transport(regularisation: float, step_size: float, min_update_size: 
     OTResampler: Callable[[Tensor, Tensor], Tuple[Tensor, Tensor, Tensor]]
         The optimal transport resampling function.
 
-    '''
+    """
 
     class OTGradientWrapper(torch.autograd.Function):
-        '''
+        """
         Optimal transport gradient can suffer from numerical instability.
         Clip the gradient of the loss wrt the transport matrix to some user specified value.
         This is done in Corenflos and Thornton's original implementation.
-        '''
+        """
         @staticmethod
         def forward(ctx: Any, transport_matrix: Tensor):
             return transport_matrix
@@ -457,9 +457,31 @@ def optimal_transport(regularisation: float, step_size: float, min_update_size: 
     return _optimal_transport
 
 
+#Needs to be a Module rather than a function to register any trainable parameters of the kernel.
 class kernel_resampling(Module):
 
+
     def __init__(self, kernel: Distribution, generator: torch.Generator):
+        """
+            Returns a function for performing differentiable kernel resampling (Younis and Sudderth 'Differentiable and Stable Long-Range Tracking of Multiple Posterior Modes' 2024).
+
+            Notes
+            -----
+            Unlike the majority of implemented resampling schemes this function returns a Module object so that learnable parameters may be properly registered.
+            In this case the final returned field is always a tensor containing a single zero.
+
+            Parameters
+            ----------
+            kernel: Distribution
+                The kernel to convolve over the particles to form the KDE sampling distribution.
+            generator: torch.Generator
+                The generator to track the random state of the resampling process.
+
+            Returns
+            -------
+            kernel_resampler: Callable[[Tensor, Tensor], Tuple[Tensor, Tensor, Tensor]]:
+                A Module whose forward method implements kernel resampling.
+        """
         super().__init__()
         self.mixture = KernelMixture(kernel, gradient_estimator='none',generator=generator)
 
@@ -471,4 +493,4 @@ class kernel_resampling(Module):
             new_weights = density - density.detach()
         else:
             new_weights = torch.zeros_like(weights)
-        return new_state, new_weights, None
+        return new_state, new_weights, torch.zeros(1, device=weights.device)

@@ -166,11 +166,13 @@ class MultivariateGaussian(Distribution):
 
     @constrained_parameter
     def cholesky_covariance(self) -> Tuple[Tensor, Tensor]:
-        diag = torch.diag(self.cholesky_covariance_.diag())
         if self.diagonal_cov:
+            diag = torch.diag(self.cholesky_covariance_.diag())
             return  self.cholesky_covariance_,  diag * diag.sign()
         tril = torch.tril(self.cholesky_covariance_)
-        return self.cholesky_covariance_, tril * diag.sign()
+        diag = tril.diagonal()
+        diag.mul_(diag.sign())
+        return self.cholesky_covariance_, tril
 
     @cached_property
     def inv_cholesky_cov(self):
@@ -265,9 +267,6 @@ class LinearGaussian(Distribution):
         if cholesky_covariance.device != self.device:
             raise ValueError(f'Weight and bias should be on the same device, found {self.device} and {bias.device}')
         self.dist = MultivariateGaussian(torch.zeros((self.dim,), device = self.device), cholesky_covariance, False, gradient_estimator, generator)
-
-    def set_cholesky_covariance(self, cholesky_covariance: Tensor) -> None:
-        self.dist.set_cholesky_covariance(cholesky_covariance)
 
     def _check_conditions(self, condition_on: Tensor) -> None:
         if condition_on.size(-1) != self.weight.size(0):

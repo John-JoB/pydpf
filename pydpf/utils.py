@@ -2,12 +2,13 @@ import torch
 from typing import Tuple
 from types import FunctionType
 from functools import update_wrapper
+from torch import Tensor
 
 from IPython.extensions.autoreload import update_function
 from joblib.externals.cloudpickle import instance
 
 
-def batched_select(tensor: torch.Tensor, index: torch.Tensor) -> torch.Tensor:
+def batched_select(tensor: Tensor, index: Tensor) -> Tensor:
     """
     Batched analog to tensor[index].
     Use to select along the mth dimension of tensor.
@@ -17,14 +18,14 @@ def batched_select(tensor: torch.Tensor, index: torch.Tensor) -> torch.Tensor:
 
     Parameters
     ----------
-    tensor : A1 x A2 X ... Am x B1 x B2 X ... X Bn torch.Tensor
+    tensor : A1 x A2 X ... Am x B1 x B2 X ... X Bn Tensor
         tensor to select from
     index : A1 x A2 x A3 X ... X Am X D torch.LongTensor
         tensor of indices to select from tensor A1.
 
     Returns
     -------
-    output : A1 x A2 X ... X Am X D X B2 X ... X Bn torch.Tensor
+    output : A1 x A2 X ... X Am X D X B2 X ... X Bn Tensor
     """
     if tensor.dim() == 3 and index.dim() == 2:
         #Special case common case for efficiency
@@ -40,14 +41,14 @@ def batched_select(tensor: torch.Tensor, index: torch.Tensor) -> torch.Tensor:
     raise ValueError('index cannot have more dimensions than tensor')
 
 
-def normalise(tensor: torch.Tensor, dim: int = -1) -> Tuple[torch.Tensor, torch.Tensor]:
+def normalise(tensor: Tensor, dim: int = -1) -> Tuple[Tensor, Tensor]:
     """
     Normalise a log-space tensor to magnitude 1 along a specified dimension.
     Also return the norm.
 
     Parameters
     ----------
-    tensor : torch.Tensor
+    tensor : Tensor
         tensor to normalise
 
     dim : int
@@ -55,17 +56,17 @@ def normalise(tensor: torch.Tensor, dim: int = -1) -> Tuple[torch.Tensor, torch.
 
     Returns
     -------
-    norm_tensor: torch.Tensor
+    norm_tensor: Tensor
         nomalised tensor
 
-    norm: torch.Tensor
+    norm: Tensor
         magnitude of tensor
 
     """
     norm = torch.logsumexp(tensor, dim=dim, keepdim=True)
     return tensor - norm, norm
 
-def multiple_unsqueeze(tensor: torch.Tensor, n: int, dim: int = -1) -> torch.Tensor:
+def multiple_unsqueeze(tensor: Tensor, n: int, dim: int = -1) -> Tensor:
     """
     Unsqueeze multiple times at the same dimension.
     Equivalent to:
@@ -76,7 +77,7 @@ def multiple_unsqueeze(tensor: torch.Tensor, n: int, dim: int = -1) -> torch.Ten
 
     Parameters
     ----------
-    tensor : torch.Tensor
+    tensor : Tensor
         Tensor to unsqueeze
     n : int
         Number of times to unsqueeze the tensor
@@ -85,7 +86,7 @@ def multiple_unsqueeze(tensor: torch.Tensor, n: int, dim: int = -1) -> torch.Ten
 
     Returns
     -------
-    output : torch.Tensor
+    output : Tensor
         Unsqueezed tensor
     """
     if n == 0:
@@ -126,3 +127,6 @@ class doc_function:
             except KeyError:
                 pass
         raise AttributeError(f'Base classes have no attribute {self.name}.')
+
+def MSE(prediction: Tensor, ground_truth: Tensor):
+    return torch.sum(torch.mean((prediction - ground_truth) ** 2, dim=(0,1)))

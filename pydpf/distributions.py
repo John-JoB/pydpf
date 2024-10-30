@@ -1,6 +1,8 @@
+from joblib.testing import param
+
 from .base import Module, cached_property, constrained_parameter
 from abc import ABCMeta, abstractmethod
-from typing import Union, Tuple, Iterable
+from typing import Union, Tuple, Iterable, List
 import torch
 from torch import Tensor
 from enum import StrEnum
@@ -83,16 +85,18 @@ class Distribution(Module, metaclass=ABCMeta):
             parameter unsqueezed to the required size.
 
         """
+        if sample.dim() - parameter.dim() == 0:
+            return parameter
         return multiple_unsqueeze(parameter, sample.dim() - parameter.dim(), -data_dims)
 
     def __init__(self, gradient_estimator: str, generator: Union[torch.Generator, None], *args, **kwargs) -> None:
         super().__init__()
         self.dim = None
-        self.device = None
         self.reparameterisable = False
         self.generator = generator
         if self.generator is None:
             self.generator = torch.default_generator
+        self.device = self.generator.device
         try:
             self.grad_est = self.GradientEstimator(gradient_estimator)
         except ValueError:
@@ -158,7 +162,6 @@ class MultivariateGaussian(Distribution):
         self.cholesky_covariance_ = cholesky_covariance
         self.diagonal_cov = diagonal_cov
         self.dim = mean.size(0)
-        self.device = mean.device
         if cholesky_covariance.device != mean.device:
             raise ValueError(f'Mean and Covariance should be on the same device, found {mean.device} and {cholesky_covariance.device}')
         if (cholesky_covariance.size(0) != self.dim) or (cholesky_covariance.size(1) != self.dim):
@@ -257,7 +260,6 @@ class LinearGaussian(Distribution):
         self.bias = bias
         self.dim = self.weight.size(0)
         self.reparameterisable = True
-        self.device = weight.device
         if (cholesky_covariance.size(0) != self.dim) or (cholesky_covariance.size(1) != self.dim):
             raise ValueError(f'Covariance must have the same dimensions as the weights first dimension, found {cholesky_covariance.size()} and {weight.size()}.')
         if bias.size(0) != self.dim:
@@ -360,15 +362,14 @@ class CompoundDistribution(Distribution):
         self.dim = 0
         #register submodules
         self.dists = torch.nn.ModuleList(distributions)
-        self.device = None
         for dist in self.dists:
             self.dim += dist.dim
             self.reparameterisable = self.reparameterisable and dist.reparameterisable
             if type(dist).conditional:
                 raise TypeError(f'None of the component distributions may be conditional, detected {type(dist)} which is.')
-            if self.device is not None and self.device != dist.device:
+            if self.device != dist.device:
                 raise ValueError(f'All component distributions must have all parameters on the same device, found {self.device} and {dist.device}.')
-            self.device = dist.device
+
 
     @doc_function
     def sample(self, sample_size: Union[Tuple[int], None]) -> Tensor:
@@ -432,26 +433,45 @@ class KernelMixture(Distribution):
     '''
     conditional = True
 
-    def __init__(self, kernel: Distribution, gradient_estimator: str, generator: Union[torch.Generator, None]):
+    def make_kernel(self, kernel: str, dim: int) -> Distribution:
+        if not kernel == 'Gaussian':
+            raise NotImplementedError('Only Gaussian kernels are implemented for automatic generation.')
+        cov = torch.nn.Parameter(torch.eye(dim, device=self.generator.device) * torch.rand(dim, device=self.generator.device, generator=self.generator))
+        return MultivariateGaussian(torch.zeros(dim, device=self.generator.device), cov, generator=self.generator, gradient_estimator='none', diagonal_cov=True)
+
+    def __init__(self, kernel: Union[List[Tuple[str, int]]], gradient_estimator: str, generator: Union[torch.Generator, None]):
         """
         Create a kernel density mixture.
         The parameter kernel is an unconditional distribution which will be convolved over the kernel density mixture.
         The resultant distribution is conditional on the locations and weights of the kernels.
 
+        Notes
+        -----
+        The parameter kernel can either be a valid KernelMixture or a recipe for creating one. The recipe is specified by a list of 2-element Tuples. The first element is the name of the distribution and
+        the second is the number of dimensions that should be distributed as the given distribution. For example if the state was the position and orientation of an object in 2D, where the positions have a Gaussian Kernel,
+        and the orientation a von Mises kernel, the appropriate list would be [('Gaussian', 2), ('von Mises', 1)].
+
         Parameters
         ----------
-        kernel: Distribution
-            The kernel to use.
+        kernel: Union[List[Tuple[str, int]], KernelMixture
+            The kernel to convolve over the particles to form the KDE sampling distribution.
         gradient_estimator : str
             The gradient estimator to use, one of 'reparameterisation', 'score' or 'none'.
         generator : Union[torch.Generator, None]
             The generator to control the rng when sampling kernels from the mixture.
         """
+
+
         super().__init__(gradient_estimator, generator)
-        self.kernel = kernel
+        if isinstance(kernel, Distribution):
+            self.kernel = kernel
+        elif len(kernel) == 1:
+            self.kernel = self.make_kernel(kernel[0][0], kernel[0][1])
+        else:
+            subkernels = [self.make_kernel(subkernel[0], subkernel[1]) for subkernel in kernel]
+            self.kernel = CompoundDistribution(subkernels, gradient_estimator='none', generator=generator)
         self.reparameterisable = False
         self.dim = self.kernel.dim
-        self.device = kernel.device
         if type(self.kernel).conditional:
             raise ValueError(f'The kernel distribution cannot be conditional, detected {type(self.kernel)} which is.')
 
@@ -522,9 +542,10 @@ class KernelMixture(Distribution):
         Sample: Tensor
          The log density of each datum in the sample.
         """
-        self._check_conditions(loc, weight)
+
         try:
+            self._check_conditions(loc, weight)
             densities = self.kernel.log_density(sample.unsqueeze(-2) - self._unsqueeze_to_size(loc, sample.unsqueeze(-2), 2))
-            return torch.logsumexp(densities + weight.unsqueeze(-1), dim=-1)
+            return torch.logsumexp(densities + weight.unsqueeze(-2), dim=-1)
         except RuntimeError as e:
             raise RuntimeError(f'Failed to apply condition with error: \n {e} \n This is likely to a mismatch in batch dimensions.')

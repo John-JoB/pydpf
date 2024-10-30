@@ -461,7 +461,7 @@ def optimal_transport(regularisation: float, step_size: float, min_update_size: 
 class kernel_resampling(Module):
 
 
-    def __init__(self, kernel: Distribution, generator: torch.Generator):
+    def __init__(self, kernel: KernelMixture):
         """
             Returns a function for performing differentiable kernel resampling (Younis and Sudderth 'Differentiable and Stable Long-Range Tracking of Multiple Posterior Modes' 2024).
 
@@ -483,7 +483,7 @@ class kernel_resampling(Module):
                 A Module whose forward method implements kernel resampling.
         """
         super().__init__()
-        self.mixture = KernelMixture(kernel, gradient_estimator='none',generator=generator)
+        self.mixture = kernel
 
     def forward(self, state: Tensor, weights: Tensor) -> Tuple[Tensor, Tensor, Tensor]:
         new_state = self.mixture.sample(state, weights, sample_size=(state.size(1),))

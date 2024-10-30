@@ -37,8 +37,8 @@ class SIS(Module):
     SIS iteratively importance samples a Markov-Chain.
     An SIS algorithm is defined by supplying an initial distribution and a Markov kernel.
     """
-    def __init__(self, initial_proposal: Callable[[int, Tensor], Tuple[Tensor, Tensor]],
-                 proposal: Callable[[Tensor, Tensor, Tensor, int], Tuple[Tensor, Tensor]]
+    def __init__(self, initial_proposal: Callable[[int, Tensor], Tuple[Tensor, Tensor, Tensor]],
+                 proposal: Callable[[Tensor, Tensor, Tensor, int], Tuple[Tensor, Tensor, Tensor]]
                  ):
         """
         Module that represents a sequential importance sampling (SIS) algorithm. A SIS algorthm is fully specified by its importance sampling
@@ -54,71 +54,20 @@ class SIS(Module):
 
         Parameters
         ----------
-        initial_proposal: Callable[[int, Tensor], Tuple[Tensor, Tensor]]
+        initial_proposal: Callable[[int, Tensor], Tuple[Tensor, Tensor, Tensor]]
             A callable object that takes the number of particles and the data/observations at time-step zero and returns an importance sample
-            of the posterior, i.e. particle position and log weights.
+            of the posterior, i.e. particle position and log weights. Also returns the observation likelihood (if applicable).
 
-        proposal: Callable[[Tensor, Tensor, Tensor, int], Tuple[Tensor, Tensor]]
+        proposal: Callable[[Tensor, Tensor, Tensor, int], Tuple[Tensor, Tensor, Tensor]]
             A callable object that implements the proposal kernel. Takes the state and log weights at the previous time step,
             the discreet time index i.e. how many iterations the filter has run for; and the data/observations at the current time-step.
             And returns an importance sample of the posterior at the current time step, i.e. particle position and log weights.
+            Also returns the observation likelihood (if applicable).
         """
         super().__init__()
         self.initial_proposal = initial_proposal
         self.proposal = proposal
-
-    def initialise(self, n_particles:int, data: Tensor) -> Tuple[Tensor, Tensor, Tensor]:
-        """
-        Initialise the SIS filter by drawing the particles at time zero.
-
-        Parameters
-        ----------
-        n_particles: int
-            The number of particles to draw per filter.
-        data: Tensor
-            The data associated to time-step zero.
-
-        Returns
-        -------
-            state: Tensor
-                The locations of the particles at time zero.
-            weights: Tensor
-                The log normalised weights of the particles at time zero.
-            weight_magnitude: Tensor
-                The log of the sum of the unnormalised weights of the particles at time zero.
-        """
-        state, weight = self.initial_proposal(n_particles, data[0])
-        weight, weight_magnitude = normalise(weight)
-        return state, weight, weight_magnitude
-
-    def advance_once(self, state: Tensor, weight: Tensor, time: int, data: Tensor) -> Tuple[Tensor, Tensor, Tensor]:
-        """
-        Advance the filter one time-step by drawing from the proposal kernel.
-
-        Parameters
-        ----------
-        state: Tensor
-            The locations of the particles at the previous time-step.
-        weight: Tensor
-            The log normalised weights of the particles at the previous time-step.
-        time: int
-            The current time-step.
-        data: Tensor
-            The data associated to the current time-step.
-
-        Returns
-        -------
-            state: Tensor
-                The locations of the particles at the current time-step.
-            weights: Tensor
-                The log normalised weights of the particles at the current time-step.
-            weight_magnitude: Tensor
-                The log of the sum of the unnormalised weights of the particles at the current time-step.
-        """
-
-        new_state, new_weight = self.proposal(state, weight, data, time)
-        new_weight, new_weight_magnitude = normalise(new_weight)
-        return new_state, new_weight, new_weight_magnitude
+        self.aggregation_function = None
 
     def forward(self, data: Tensor,
                 n_particles: int,
@@ -140,21 +89,22 @@ class SIS(Module):
             The maximum time-step to run to, including time 0, the filter will draw {time_extent + 1} importance sample populations.
         aggregation_function: Callable[[Tensor, Tensor, Tensor, Tensor, int], Tensor]
             A Callable that processes the filtering outputs (the particle locations, the normalised log weights,
-            the log sum of the unormalised weights, and the time-step) into an output per time-step.
+            the log sum of the unormalised weights, the data, the time-step) into an output per time-step.
 
         Returns
         -------
         output: Tensor
             The output of the filter, formed from stacking the output of aggregation_function for every time-step.
         """
-
-        state, weight, weight_magnitude = self.initialise(n_particles, data)
-        temp = aggregation_function(state, weight, weight_magnitude, data[0], 0)
+        #Register any parameters
+        self.aggregation_function = aggregation_function
+        state, weight, likelihood = self.initial_proposal(n_particles, data[0])
+        temp = aggregation_function(state, weight, likelihood, data[0], 0)
         output = torch.empty((time_extent+1, *temp.size()), device = data.device, dtype=torch.float32)
         output[0] = temp
         for time in range(1, time_extent+1):
-            state, weight, weight_magnitude = self.advance_once(state, weight, time, data[time])
-            output[time] = aggregation_function(state, weight, weight_magnitude, data[time], time)
+            state, weight, likelihood = self.proposal(state, weight, data[time], time)
+            output[time] = aggregation_function(state, weight, likelihood, data[time], time)
         return output
 
 
@@ -190,6 +140,17 @@ class ParticleFilter(SIS):
             resultant algorithm to be properly a particle filter, this kernel should be restricted such that the particles depend only on the
             population at the previous time-step through the particle at the same index.
         """
+        class PF_initial_sampler(Module):
+            def __init__(self):
+                super().__init__()
+                self.initial_proposal = initial_proposal
+
+            def forward(self, n_particles: int, data_: Tensor) -> Tuple[Tensor, Tensor, Tensor]:
+                state, weight = self.initial_proposal(n_particles, data_)
+                weight, likelihood = normalise(weight)
+                return state, weight, likelihood
+
+
         class PF_sampler(Module):
             def __init__(self):
                 super().__init__()
@@ -198,9 +159,13 @@ class ParticleFilter(SIS):
 
             def forward(self, x, w, data_, t):
                 resampled_x, resampled_w, _ = self.resampler(x, w)
-                return self.proposal(resampled_x, resampled_w, data_, t)
+                initial_likelihood = torch.logsumexp(resampled_w, dim=-1)
+                state, weight = self.proposal(resampled_x, resampled_w, data_, t)
 
-        super().__init__(initial_proposal, PF_sampler())
+                weight , likelihood = normalise(weight)
+                return state, weight, likelihood - initial_likelihood
+
+        super().__init__(PF_initial_sampler(), PF_sampler())
 
 class DPF(ParticleFilter):
     """
@@ -312,41 +277,28 @@ class StopGradientDPF(ParticleFilter):
 
 class KernelDPF(ParticleFilter):
 
-    def make_kernel(self, kernel: str, dim = 0, generator: torch.Generator = torch.default_generator) -> Distribution:
-        device = generator.device
-        if not kernel == 'Gaussian':
-            raise NotImplementedError('Only Gaussian kernels are implemented for automatic generation.')
-        cov = torch.nn.Parameter(torch.eye(dim, device = device) * torch.rand(dim, device=device, generator=generator))
-        return MultivariateGaussian(torch.zeros(dim, device=device), cov, generator=generator, gradient_estimator='none', diagonal_cov=True)
-
     def __init__(self, initial_proposal: Callable[[int, Tensor], Tuple[Tensor, Tensor]],
                  proposal: Callable[[Tensor, Tensor, Tensor, int], Tuple[Tensor, Tensor]],
-                 kernel: Union[List[Tuple[str, int]], KernelMixture],
-                 resampling_generator: torch.Generator = torch.default_generator) -> None:
+                 kernel: KernelMixture) -> None:
         """
             Differentiable particle filter with mixture kernel resampling (Younis and Sudderth 'Differentiable and Stable Long-Range Tracking of Multiple Posterior Modes' 2024).
 
-            Notes
-            -----
-            The parameter kernel can either be a valid KernelMixture or a recipe for creating one. The recipe can be
+
 
             Parameters
             ----------
-            kernel: Distribution
-                The kernel to convolve over the particles to form the KDE sampling distribution.
-            generator: torch.Generator
-                The generator to track the random state of the resampling process.
+            initial_proposal: Callable[[int, Tensor], Tuple[Tensor, Tensor]]
+                Importance sampler for the initial distribution, takes the number of particles and the data at time 0,
+                and returns the importance sampled state and weights
+            proposal: Callable[[Tensor, Tensor, Tensor, int], Tuple[Tensor, Tensor]]
+                Importance sampler from the proposal kernel, takes the state, weights and data and returns the new states and weights.
+            kernel: KernelMixture
+                The kernel mixture to convolve over the particles to form the KDE sampling distribution.
 
             Returns
             -------
             kernel_resampler: Callable[[Tensor, Tensor], Tuple[Tensor, Tensor, Tensor]]:
                 A Module whose forward method implements kernel resampling.
         """
-        if isinstance(kernel, KernelMixture):
-            pass
-        elif len(kernel) == 1:
-            kernel = self.make_kernel(kernel[0][0], kernel[0][1], resampling_generator)
-        else:
-            subkernels = [self.make_kernel(subkernel[0], subkernel[1], resampling_generator) for subkernel in kernel]
-            kernel = CompoundDistribution(subkernels, gradient_estimator='none', generator=resampling_generator)
-        super().__init__(initial_proposal, kernel_resampling(kernel, resampling_generator), proposal)
+
+        super().__init__(initial_proposal, kernel_resampling(kernel), proposal)

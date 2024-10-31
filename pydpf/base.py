@@ -39,12 +39,16 @@ class Module(TorchModule, metaclass=ABCMeta):
                 self.cached_properties[attr] = v
             if isinstance(v, constrained_parameter):
                 self.constrained_parameters[attr] = v
+        self.disallow_set_values = False
         super().__init__()
 
 
     def __setattr__(self, key: str, value: Any) -> None:
-        #To be safe if a cached_property is set after object initialisation
-        #Not sure how this would come about
+
+        if key.endswith('_value') and self.disallow_set_values:
+            raise AttributeError('Attributes ending with _value are reserved')
+        # To be safe if a cached_property is set after object initialisation
+        # Not sure how this would come about
         if isinstance(value, cached_property):
             self.cached_properties[key] = value
         if isinstance(value, constrained_parameter):
@@ -62,9 +66,6 @@ class Module(TorchModule, metaclass=ABCMeta):
         Update all constrained_parameters and cached_properties belonging to this Module.
         """
         self._update()
-        if torch.is_inference_mode_enabled():
-            #raise RuntimeError('Cannot update module in inference mode.')
-            pass
         for child in self.modules():
             child._update()
 
@@ -104,7 +105,11 @@ class constrained_parameter:
                 d = self.function(instance)
                 d[0].sub_(d[0]).add_(d[1])
             return d[0]
-        setattr(instance, self.value_name, f())
+
+        v = f()
+        instance.disallow_set_values = False
+        setattr(instance, self.value_name, v)
+        instance.disallow_set_values = True
 
     def __set__(self):
         raise AttributeError("Cannot directly set a constrained parameter.")
@@ -128,7 +133,10 @@ class cached_property:
 
     def __get__(self, instance, owner):
         if not hasattr(instance, self.value_name):
-            setattr(instance, self.value_name, self.function(instance))
+            v = self.function(instance)
+            instance.disallow_set_values = False
+            setattr(instance, self.value_name, v)
+            instance.disallow_set_values = True
         return getattr(instance, self.value_name)
 
     def _update(self, instance):

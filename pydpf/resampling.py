@@ -1,22 +1,20 @@
-'''
+"""
 Python file to contain the functions for performing resampling.
 
 For use with our filtering algorithms the resampling functions must take the particle positions and log normalised weights
-and return the resampled positions, resampled normalised weights and some other tensor, which can be used to report on intermediates
-of the resampling process. Usually this is the resampled indices.
+and return the resampled positions, resampled normalised weights.
 
 We keep the usual pytorch design pattern of passing parameters/hyperparameters at object creation. I.e. the top-level functions in this file
 are functions from the hyperparameters to a Callable with the above specified signature. In most cases the resampling algorithm has no trainable
 parameters, so the returned object is a simple python function, but if it does then the object is a Module with the forward() method implemented.
-'''
-
+"""
 import torch
 from torch import Tensor
-from typing import Tuple, Any, Callable
+from typing import Tuple, Any
 from .utils import batched_select
 from .distributions import KernelMixture, Distribution
 from .base import Module
-from .custom_types import Resampler
+from .custom_types import Resampler, WeightedSample
 
 def multinomial(generator: torch.Generator) -> Resampler:
     '''
@@ -34,10 +32,10 @@ def multinomial(generator: torch.Generator) -> Resampler:
     MultinomialResampler: Resampler
         The multinomial resampling function.
     '''
-    def _multinomial(state: Tensor, weights: Tensor) -> Tuple[Tensor, Tensor, Tensor]:
+    def _multinomial(state: Tensor, weights: Tensor) -> WeightedSample:
         with torch.no_grad():
             sampled_indices = torch.multinomial(torch.exp(weights), weights.size(1), replacement=True, generator=generator).detach()
-        return batched_select(state, sampled_indices), torch.zeros_like(weights), sampled_indices
+        return batched_select(state, sampled_indices), torch.zeros_like(weights)
     return _multinomial
 
 def systematic(generator: torch.Generator) -> Resampler:
@@ -65,7 +63,7 @@ def systematic(generator: torch.Generator) -> Resampler:
     SystematicResampler: Resampler
         The systematic resampling function.
     '''
-    def _systematic(state: Tensor, weights: Tensor) -> Tuple[Tensor, Tensor, Tensor]:
+    def _systematic(state: Tensor, weights: Tensor) -> WeightedSample:
         with torch.no_grad():
             offset = torch.rand((weights.size(0),), device=state.device, generator=generator)
             cum_probs = torch.cumsum(torch.exp(weights), dim= 1)
@@ -75,7 +73,7 @@ def systematic(generator: torch.Generator) -> Resampler:
             cum_probs[:,-1] = 1.
             resampling_points = torch.arange(weights.size(1), device=state.device) + offset.unsqueeze(1)
             sampled_indices = torch.searchsorted(cum_probs * weights.size(1), resampling_points)
-        return batched_select(state, sampled_indices), torch.zeros_like(weights), sampled_indices
+        return batched_select(state, sampled_indices), torch.zeros_like(weights)
     return _systematic
 
 
@@ -111,13 +109,13 @@ def soft(softness: float, generator: torch.Generator):
     log_softness = torch.log(torch.tensor([softness]))
     neg_log_softness = torch.log(torch.tensor([1 - softness]))
     _systematic = systematic(generator)
-    def _soft(state: Tensor, weights: Tensor) -> Tuple[Tensor, Tensor, Tensor]:
+    def _soft(state: Tensor, weights: Tensor) -> WeightedSample:
         nonlocal log_softness, neg_log_softness
         log_softness = log_softness.to(device=state.device)
         neg_log_softness = neg_log_softness.to(device=state.device)
         soft_weights = torch.logaddexp(weights + log_softness, neg_log_softness - torch.log(torch.tensor(weights.size(1), device = state.device)))
-        state, _, sampled_indices = _systematic(state, soft_weights)
-        return state, weights - soft_weights, sampled_indices
+        state, _ = _systematic(state, soft_weights)
+        return state, weights - soft_weights
     return _soft
 
 
@@ -138,13 +136,13 @@ def soft_multinomial(softness: float, generator: torch.Generator):
     log_softness = torch.log(torch.tensor([softness]))
     neg_log_softness = torch.log(torch.tensor([1 - softness]))
     _multinomial = multinomial(generator=generator)
-    def _soft_systematic(state: Tensor, weights: Tensor) -> Tuple[Tensor, Tensor, Tensor]:
+    def _soft_systematic(state: Tensor, weights: Tensor) -> WeightedSample:
         nonlocal log_softness, neg_log_softness
         log_softness = log_softness.to(device = state.device)
         neg_log_softness = neg_log_softness.to(device = state.device)
         soft_weights = torch.logaddexp(weights + log_softness, neg_log_softness - torch.log(torch.tensor(weights.size(1), device = state.device)))
         state, _, sampled_indices = _multinomial(state, soft_weights)
-        return state, weights - soft_weights, sampled_indices
+        return state, weights - soft_weights
     return _soft_systematic
 
 
@@ -448,13 +446,13 @@ def optimal_transport(regularisation: float, step_size: float, min_update_size: 
         def backward(ctx: Any, dtransport) -> Any:
             return torch.clip(dtransport, -transport_gradient_clip, transport_gradient_clip)
 
-    def _optimal_transport(state: Tensor, weights: Tensor) -> Tuple[Tensor, Tensor, Tensor]:
+    def _optimal_transport(state: Tensor, weights: Tensor) -> WeightedSample:
         N = state.size(1)
         log_b, cost, diam = get_sinkhorn_inputs_OT(N, weights, state)
         f, g, epsilon_used = sinkhorn_loop(weights, log_b, cost, regularisation, min_update_size, max_iterations, diam.reshape(-1, 1, 1), step_size)
         transport = get_transport_from_potentials(weights, log_b, cost, f, g, epsilon_used)
         transport = OTGradientWrapper.apply(transport)
-        return apply_transport(state, transport, N), torch.zeros_like(weights), transport
+        return apply_transport(state, transport, N), torch.zeros_like(weights)
     return _optimal_transport
 
 
@@ -486,7 +484,7 @@ class kernel_resampling(Module):
         super().__init__()
         self.mixture = kernel
 
-    def forward(self, state: Tensor, weights: Tensor) -> Tuple[Tensor, Tensor, Tensor]:
+    def forward(self, state: Tensor, weights: Tensor) -> WeightedSample:
         new_state = self.mixture.sample(state, weights, sample_size=(state.size(1),))
         # Save computation if gradient is not required
         if torch.is_grad_enabled():
@@ -494,4 +492,4 @@ class kernel_resampling(Module):
             new_weights = density - density.detach()
         else:
             new_weights = torch.zeros_like(weights)
-        return new_state, new_weights, torch.zeros(1, device=weights.device)
+        return new_state, new_weights

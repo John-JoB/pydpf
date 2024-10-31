@@ -152,7 +152,7 @@ class ParticleFilter(SIS):
                 self.proposal = proposal
 
             def forward(self, x, w, data_, t):
-                resampled_x, resampled_w, _ = self.resampler(x, w)
+                resampled_x, resampled_w = self.resampler(x, w)
                 initial_likelihood = torch.logsumexp(resampled_w, dim=-1)
                 state, weight = self.proposal(resampled_x, resampled_w, data_, t)
 

@@ -16,8 +16,9 @@ from typing import Tuple, Any, Callable
 from .utils import batched_select
 from .distributions import KernelMixture, Distribution
 from .base import Module
+from .custom_types import Resampler
 
-def multinomial(generator: torch.Generator) -> Callable[[Tensor, Tensor], Tuple[Tensor, Tensor, Tensor]]:
+def multinomial(generator: torch.Generator) -> Resampler:
     '''
     Returns a function to perform multinomial resampling.
 
@@ -30,7 +31,7 @@ def multinomial(generator: torch.Generator) -> Callable[[Tensor, Tensor], Tuple[
 
     Returns
     -------
-    MultinomialResampler: Callable[[Tensor, Tensor], Tuple[Tensor, Tensor, Tensor]]
+    MultinomialResampler: Resampler
         The multinomial resampling function.
     '''
     def _multinomial(state: Tensor, weights: Tensor) -> Tuple[Tensor, Tensor, Tensor]:
@@ -39,7 +40,7 @@ def multinomial(generator: torch.Generator) -> Callable[[Tensor, Tensor], Tuple[
         return batched_select(state, sampled_indices), torch.zeros_like(weights), sampled_indices
     return _multinomial
 
-def systematic(generator: torch.Generator) -> Callable[[Tensor, Tensor], Tuple[Tensor, Tensor, Tensor]]:
+def systematic(generator: torch.Generator) -> Resampler:
     '''
     Returns a function to perform multinomial resampling as described in An Introduction to Sequential Monte Carlo (Chopin and Papaspiliopoulos 2020).
 
@@ -61,7 +62,7 @@ def systematic(generator: torch.Generator) -> Callable[[Tensor, Tensor], Tuple[T
 
     Returns
     -------
-    SystematicResampler: Callable[[Tensor, Tensor], Tuple[Tensor, Tensor, Tensor]]
+    SystematicResampler: Resampler
         The systematic resampling function.
     '''
     def _systematic(state: Tensor, weights: Tensor) -> Tuple[Tensor, Tensor, Tensor]:
@@ -101,7 +102,7 @@ def soft(softness: float, generator: torch.Generator):
 
     Returns
     -------
-    SoftResampler: Callable[[Tensor, Tensor], Tuple[Tensor, Tensor, Tensor]]
+    SoftResampler: Resampler
         The systematic resampling function.
 
     '''
@@ -162,7 +163,7 @@ def stop_gradient(generator: torch.Generator):
 
     Returns
     -------
-    SoftResampler: Callable[[Tensor, Tensor], Tuple[Tensor, Tensor, Tensor]]
+    SoftResampler: Resampler
         The systematic resampling function.
 
     '''
@@ -388,7 +389,7 @@ def sinkhorn_loop(log_a: Tensor, log_b: Tensor, cost: Tensor, epsilon: float, th
     return f, g, epsilon_now
 
 
-def optimal_transport(regularisation: float, step_size: float, min_update_size: float, max_iterations: int, transport_gradient_clip: float) -> Callable[[Tensor, Tensor], Tuple[Tensor, Tensor, Tensor]]:
+def optimal_transport(regularisation: float, step_size: float, min_update_size: float, max_iterations: int, transport_gradient_clip: float) -> Resampler:
     """
     Returns a function for perfoming optimal transport resampling, (A. Corenflos, J. Thornton, G. Deligiannidis and A. Doucet
     'Differentiable Particle Filtering via Entropy-Regularized Optimal Transport' 2021)
@@ -429,7 +430,7 @@ def optimal_transport(regularisation: float, step_size: float, min_update_size: 
 
     Returns
     -------
-    OTResampler: Callable[[Tensor, Tensor], Tuple[Tensor, Tensor, Tensor]]
+    OTResampler: Resampler
         The optimal transport resampling function.
 
     """
@@ -479,7 +480,7 @@ class kernel_resampling(Module):
 
             Returns
             -------
-            kernel_resampler: Callable[[Tensor, Tensor], Tuple[Tensor, Tensor, Tensor]]:
+            kernel_resampler: Resampler:
                 A Module whose forward method implements kernel resampling.
         """
         super().__init__()

@@ -165,15 +165,27 @@ def stop_gradient(generator: torch.Generator):
         The systematic resampling function.
 
     '''
-    _systematic = systematic(generator=generator)
+    def _systematic(state: Tensor, weights: Tensor) -> Tuple[Tensor, Tensor, Tensor]:
+        with torch.no_grad():
+            offset = torch.rand((weights.size(0),), device=state.device, generator=generator)
+            cum_probs = torch.cumsum(torch.exp(weights), dim= 1)
+            #No index can be above 1. and the last index must be exactly 1.
+            #Fix this in case of numerical errors
+            cum_probs = torch.where(cum_probs > 1., 1., cum_probs)
+            cum_probs[:,-1] = 1.
+            resampling_points = torch.arange(weights.size(1), device=state.device) + offset.unsqueeze(1)
+            sampled_indices = torch.searchsorted(cum_probs * weights.size(1), resampling_points)
+        return batched_select(state, sampled_indices), torch.zeros_like(weights), sampled_indices
+
+
     def _stop_gradient(state: Tensor, weight: Tensor):
         state, no_grad_weights, sampled_indices = _systematic(state, weight)
         #Save computation if gradient is not required
         if torch.is_grad_enabled():
             resampled_weights = batched_select(weight, sampled_indices)
-            return state, resampled_weights - resampled_weights.detach(), sampled_indices
+            return state, resampled_weights - resampled_weights.detach()
         else:
-            return state, no_grad_weights, sampled_indices
+            return state, no_grad_weights
     return _stop_gradient
 
 def diameter(x: Tensor):

@@ -7,7 +7,7 @@ from .base import Module
 from .resampling import systematic, soft, optimal_transport, stop_gradient, kernel_resampling
 from .distributions import KernelMixture
 
-'''
+"""
 Python module for the core filtering algorithms. 
 
 In pydpf a filtering algorithm is defined by it's sampling procedures rather than the underlying model. 
@@ -29,7 +29,7 @@ Note on data: data should be treated similarly abstractly to the algorithm/model
 should be whatever data is required to sample the desired posterior. In a vanilla (bootstrap) filtering scenario this the observation at 
 that time-step, but it doesn't have to be in general. pydpf makes no distinction between observations (past, present or future) and 
 exogenous variables, all are treated as non-random inputs.
-'''
+"""
 
 class SIS(Module):
     """

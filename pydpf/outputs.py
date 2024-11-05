@@ -40,7 +40,7 @@ class MSE_Loss(Module):
 
     def forward(self, state: Tensor, norm_weights: Tensor, likelihood, data, time):
         filter_mean = self.mean(state, norm_weights, likelihood, data, time)
-        return torch.sum(torch.mean((self.ground_truth[time] - filter_mean) ** 2, dim=0))
+        return torch.mean(torch.sum((self.ground_truth[time] - filter_mean) ** 2, dim=-1))
 
 class LogLikelihoodFactors(Module):
 

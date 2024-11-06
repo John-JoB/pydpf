@@ -57,6 +57,89 @@ class StateSpaceDataset(Dataset):
     def __getitem__(self, idx):
         return self.state[:, idx], self.observation[:, idx]
 
+    def normalise_dims(self, normalise_state: bool, scale_dims: str = 'all', individual_timesteps: bool = True, dims: Union[Tuple[int], None] = None) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Normalise the data to have mean zero and standard deviation one.
+
+        This function normalises the data inplace and returns the offset and scale. Such that the original data can be reclaimed by original_data = normalised_data * scale + offset.
+
+        This function can be applied to either the state or observations, this is controlled by the parameter normalise_state.
+
+        There are various methods to control the scaling, determined by the value of scale_dims:
+            - 'all': scale each dimension independently, such that every dimension have standard deviation 1.
+            - 'max': scale each dimension by the same factor, such that the maximum of the standard deviations is 1.
+            - 'min': scale each dimension by the same factor, such that the minimum of the standard deviations is 1.
+            - 'norm': scale each dimension by the same factor, such that the standard deviation of the vector norm of the data is 1.
+
+        The parameter individual_timesteps controls whether to apply the same normalisation across time-steps, or to calculate a separate mean and standard deviation per time-step.
+
+        The normalisation doesn't have to be across all data dimensions, one can specify a tuple of dimensions to include to the parameter dims. Or set dims=None to use all dimensions.
+
+        Parameters
+        ----------
+        normalise_state: bool
+            When True, normalise the state. When False, normalise the observations.
+        scale_dims: str
+            The method to scale over dimensions. See above for options and details.
+        individual_timesteps: bool, default=True
+            When true, the scaling and offset is calculated per-time-step, when false the scaling and offset are set to be the same for each time-step (in most cases this should be True).
+        dims: Tuple[int] or None, default=None
+            The dimensions to normalise.
+
+        Returns
+        -------
+        offset: torch.Tensor
+            The per-element offset.
+        scaling: torch.Tensor
+            The per-element scaling.
+
+        """
+        with torch.no_grad():
+            if not scale_dims in ['all', 'max', 'min', 'norm']:
+                raise ValueError('scale_dims must be one of "all", "max", "min" or "norm"')
+            if normalise_state:
+                data = self.state
+            else:
+                data = self.observation
+            data_size = data.size(-1)
+            data = data.transpose(0, -1)
+            if dims is None:
+                mask = [True for _ in range(data_size)]
+            else:
+                mask = [False for _ in range(data_size)]
+                for d in dims:
+                    if d < 0:
+                        d = data_size + d
+                    if d >= data_size or d < 0:
+                        raise IndexError('Dimension out of bounds')
+                    mask[d] = True
+
+            if individual_timesteps:
+                reduction_dims = (2,)
+            else:
+                reduction_dims = (1, 2)
+
+            masked_data = data[mask]
+
+            means = torch.mean(masked_data, dim=reduction_dims, keepdim=True)
+            if scale_dims == 'all':
+                std = torch.std(masked_data, dim=reduction_dims, keepdim=True)
+            if scale_dims == 'max':
+                std = torch.amax(torch.std(masked_data, dim=reduction_dims, keepdim=True), dim=0, keepdim=True)
+            if scale_dims == 'min':
+                std = torch.amin(torch.std(masked_data, dim=reduction_dims, keepdim=True), dim=0, keepdim=True)
+            if scale_dims == 'norm':
+                std = torch.std(torch.linalg.vector_norm(masked_data, dim=0, keepdim=True), dim=reduction_dims, keepdim=True)
+
+            means = means.expand(masked_data.size())
+            std = std.expand(masked_data.size())
+            data[mask] = (masked_data - means) / std
+            if normalise_state:
+                self.state = data.transpose(0, -1)
+            else:
+                self.observation = data.transpose(0, -1)
+            return means.transpose(0, -1), std.transpose(0, -1)
+
     @staticmethod
     def collate(batch) -> Tuple[torch.Tensor, torch.Tensor]:
         #By default, the batch is the first dimension.
@@ -114,5 +197,11 @@ def simulate_to_folder(dir_path: str,
             print(f'Saving batch     {batch + 1}/{n_batches}', end='\r')
             Parallel(n_jobs=processes)(delayed(lambda traj_index_: write_helper(traj_index_, batch_size * batch, dir_path, state, observation))(traj_index) for traj_index in range(observation.size(1)))
     print('Done                  \n')
+
+
+
+
+
+
 
 

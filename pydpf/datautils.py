@@ -33,7 +33,6 @@ class StateSpaceDataset(Dataset):
         At the moment I only give functionality to load entire data set into RAM/VRAM.
         Might give the option to load lazily in the future, if required.
     '''
-
     def __init__(self, dir_path: str, device: Union[str, torch.device] = torch.device('cpu'), processes: int = -1) -> None:
         self.device = device
 
@@ -48,14 +47,16 @@ class StateSpaceDataset(Dataset):
         read_output = list(zip(*read_output))
         state = torch.stack(read_output[0])
         observation = torch.stack(read_output[1])
-        self.state = torch.einsum('ijk -> jik', state)
-        self.observation = torch.einsum('ijk -> jik', observation)
+        self.data = torch.cat((state, observation), dim =-1).contiguous()
+        self.state_dim = state.size(-1)
+        self.state = self.data[:, :, :self.state_dim]
+        self.observation = self.data[:,:,self.state_dim:]
 
     def __len__(self):
-        return self.state.size(1)
+        return self.state.size(0) #self.state.size(1)
 
     def __getitem__(self, idx):
-        return self.state[:, idx], self.observation[:, idx]
+        return self.data[idx]
 
     def normalise_dims(self, normalise_state: bool, scale_dims: str = 'all', individual_timesteps: bool = True, dims: Union[Tuple[int], None] = None) -> Tuple[torch.Tensor, torch.Tensor]:
         """
@@ -135,17 +136,18 @@ class StateSpaceDataset(Dataset):
             std = std.expand(masked_data.size())
             data[mask] = (masked_data - means) / std
             if normalise_state:
-                self.state = data.transpose(0, -1)
+                self.state.data = data.transpose(0, -1)
             else:
-                self.observation = data.transpose(0, -1)
+                self.observation.data = data.transpose(0, -1)
             return means.transpose(0, -1), std.transpose(0, -1)
 
-    @staticmethod
-    def collate(batch) -> Tuple[torch.Tensor, torch.Tensor]:
+
+    def collate(self, batch) -> Tuple[torch.Tensor, torch.Tensor]:
         #By default, the batch is the first dimension.
         #Pass this function to collate_fn when defining a dataloader to make it the second.
-        collated_batch = torch.utils.data.default_collate(batch)
-        return torch.einsum('ijk -> jik', collated_batch[0]), torch.einsum('ijk -> jik', collated_batch[1])
+        #collated_batch = torch.utils.data.default_collate(batch)
+        collated_batch = torch.stack(batch, dim=1)
+        return collated_batch[:, :, :self.state_dim].contiguous(), collated_batch[:, :, self.state_dim:].contiguous()
 
 
 def simulate_to_folder(dir_path: str,

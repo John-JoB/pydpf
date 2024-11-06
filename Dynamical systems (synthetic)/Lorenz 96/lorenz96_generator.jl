@@ -83,6 +83,12 @@ observations = compute_linear_observations(sim, H, R, delta_t);
 print("Generated $num_series $state_dimension dimensional series of length $(length(sim[1].t)) and associated observations!")
 
 # # plot(sim[1].t, reduce(hcat, observations[1])')
+function expand_vector_col!(df, col)
+    col_width = length(df[begin, col])
+    target_cols = ["$(col)_$i" for i in 1:col_width]
+    transform!(df, col => ByRow(identity) => target_cols)
+    select!(df, Not(col))
+end
 
 function save_sim_obs_to_file(path, sim, obs)
     mkpath(path)
@@ -90,6 +96,8 @@ function save_sim_obs_to_file(path, sim, obs)
     Threads.@threads for idx in eachindex(sim)
         dataframes_vector[idx] = DataFrame(series_id=idx, t = sim[idx].t, state=sim[idx].u, observation=obs[idx])
         # CSV.write(path * "$idx.csv", sim_dataframe)
+        expand_vector_col!(dataframes_vector[idx], "state")
+        expand_vector_col!(dataframes_vector[idx], "observation")
     end
     dataframe_joined = vcat(dataframes_vector...)
     CSV.write(path * "simulated_data.csv", dataframe_joined)
@@ -98,5 +106,7 @@ end
 
 current_datetime_fs_string = Dates.format(now(), "yyyy-mm-dd_HH-MM-SS")
 save_path = "./Lorenz 96/data/L96_SYSTEM_$(current_datetime_fs_string)_$(state_dimension)_DIM_STATE_$(size(H)[1])_DIM_OBS_WITH_$(sparsity_amount*100)PERCENT_SPARSITY/";
+
+
 
 df_out = save_sim_obs_to_file(save_path, sim, observations);

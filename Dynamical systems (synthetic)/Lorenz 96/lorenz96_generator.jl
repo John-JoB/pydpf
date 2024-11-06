@@ -25,14 +25,6 @@ function lorenz!(du, u, p, t)
     nothing
 end
 
-# function lorenz!(du, u, p, t)
-#     ρ, σ, β = (28.0, 10.0, 8.0 / 3.0)
-#     du[1] = σ * (u[2] - u[1])
-#     du[2] = u[1] * (ρ - u[3]) - u[2]
-#     du[3] = u[1] * u[2] - β * u[3]
-#     nothing
-# end
-
 function σ_lorenz(du, u, p, t)
     du .= 5.0
 end
@@ -49,16 +41,15 @@ num_series = 100
 delta_t = 0.01
 u0 = ones(state_dimension)
 u0[1] = 0.01
-# u0 = [1.0, 0.0, 0.0]
 
 tspan = (0.0, 10.0)
 
 prob = SDEProblem{true}(lorenz!, σ_lorenz, u0, tspan, [8,]);
 
 ensemble_prob = EnsembleProblem(prob, prob_func=prob_func, safetycopy=false)
-sim = solve(ensemble_prob, SOSRA(), EnsembleThreads(), trajectories=num_series, saveat=range(tspan..., step=0.01))
-# sim = solve(prob, SOSRA());
-# plot(sim, idxs=(1, 2, 3))
+sim = solve(ensemble_prob, SOSRA(), EnsembleThreads(), trajectories=num_series, saveat=range(tspan..., step=delta_t))
+# sim_single = solve(prob, SOSRA());
+# plot(sim_single, idxs=(1, 2, 3))
 
 function compute_linear_observations(ensemble, H, R, delta_t)
     U = (cholesky(R).U)'
@@ -77,12 +68,11 @@ H = rand(5, state_dimension)
 H .*= (rand(5, state_dimension) .> sparsity_amount)
 R = rand(5, 5)
 R *= R'
-R *= 1.0 ^ 2
+R *= 1.0^2
 
 observations = compute_linear_observations(sim, H, R, delta_t);
 print("Generated $num_series $state_dimension dimensional series of length $(length(sim[1].t)) and associated observations!")
 
-# # plot(sim[1].t, reduce(hcat, observations[1])')
 function expand_vector_col!(df, col)
     col_width = length(df[begin, col])
     target_cols = ["$(col)_$i" for i in 1:col_width]
@@ -94,8 +84,7 @@ function save_sim_obs_to_file(path, sim, obs)
     mkpath(path)
     dataframes_vector = Vector{DataFrame}(undef, length(sim))
     Threads.@threads for idx in eachindex(sim)
-        dataframes_vector[idx] = DataFrame(series_id=idx, t = sim[idx].t, state=sim[idx].u, observation=obs[idx])
-        # CSV.write(path * "$idx.csv", sim_dataframe)
+        dataframes_vector[idx] = DataFrame(series_id=idx, t=sim[idx].t, state=sim[idx].u, observation=obs[idx])
         expand_vector_col!(dataframes_vector[idx], "state")
         expand_vector_col!(dataframes_vector[idx], "observation")
     end

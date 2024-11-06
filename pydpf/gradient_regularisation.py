@@ -1,7 +1,5 @@
 """
 This Module implements methods for modifying the gradient of the particles. This is most often done for stability.
-
-File in testing, just uploaded to github so I can access it on my other pc.
 """
 
 from .filtering import SIS
@@ -76,6 +74,17 @@ class ClipByElement(GradientRegularisedSIS):
 
 
 class ClipByNorm(GradientRegularisedSIS):
+    """
+    Clips the gradient of the particles and their weights to some constant value.
+
+    Parameters
+    ----------
+    base_SIS : SIS
+    The sequential importance sampler to modify the gradient of.
+
+    clip_threshold: float
+    The threshold above which to clip.
+    """
 
     def make_grad_fun(self, clip_threshold: float):
         class gradient_fun(torch.autograd.Function):
@@ -96,6 +105,18 @@ class ClipByNorm(GradientRegularisedSIS):
 
 
 class ClipByParticle(GradientRegularisedSIS):
+    """
+    Clips the norm of the gradient assigned per-particle.
+
+    Parameters
+    ----------
+    base_SIS : SIS
+    The sequential importance sampler to modify the gradient of.
+
+    clip_threshold: float
+    The threshold above which to clip.
+    """
+
     def make_grad_fun(self, clip_threshold: float):
         class gradient_fun(torch.autograd.Function):
             @staticmethod
@@ -108,12 +129,10 @@ class ClipByParticle(GradientRegularisedSIS):
                 state, weight = ctx.saved_tensors
                 exp_weights = torch.exp(weight).unsqueeze(-1)
                 dparticle = dstate/exp_weights + dweight.unsqueeze(-1)/(exp_weights*state)
-                real_grad_state = (dparticle/2) * exp_weights
-                real_grad_weight = torch.sum(real_grad_state * state, dim = -1)
                 mag_dparticle = torch.linalg.vector_norm(dparticle, -1, keepdim=True)/2
                 zero_mask = (exp_weights > 1e-7)
                 too_big_mask = torch.logical_and(mag_dparticle > clip_threshold, zero_mask)
-                dstate = torch.where(zero_mask, torch.where(too_big_mask, real_grad_state/mag_dparticle, real_grad_state), 0.)
-                dweight = torch.where(zero_mask.squeeze(), torch.where(too_big_mask.squeeze(), real_grad_weight/mag_dparticle.squeeze(), real_grad_weight), 0.)
+                dstate = torch.where(zero_mask, torch.where(too_big_mask, dstate/mag_dparticle, dstate), 0.)
+                dweight = torch.where(zero_mask.squeeze(), torch.where(too_big_mask.squeeze(), dweight/mag_dparticle.squeeze(), dweight), 0.)
                 return dstate, dweight, dLikelihood, None, None
         return gradient_fun

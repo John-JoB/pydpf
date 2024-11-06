@@ -1,4 +1,4 @@
-from typing import Tuple
+from typing import Tuple, Callable, Union
 from .custom_types import Resampler, ImportanceKernel, ImportanceSampler, Aggregation, ImportanceSamplerLikelihood, ImportanceKernelLikelihood
 import torch
 from torch import Tensor
@@ -6,6 +6,7 @@ from .utils import normalise
 from .base import Module
 from .resampling import systematic, soft, optimal_transport, stop_gradient, kernel_resampling
 from .distributions import KernelMixture
+from .utils import batched_select
 
 """
 Python module for the core filtering algorithms. 
@@ -178,7 +179,7 @@ class DPF(ParticleFilter):
             Importance sampler for the initial distribution, takes the number of particles and the data at time 0,
             and returns the importance sampled state and weights
         proposal: ImportanceKernel
-            Importance sampler from the proposal kernel, takes the state, weights and data and returns the new states and weights.
+            Importance sampler for the proposal kernel, takes the state, weights and data and returns the new states and weights.
         """
         super().__init__(initial_proposal, systematic(resampling_generator), proposal)
 
@@ -198,7 +199,7 @@ class SoftDPF(ParticleFilter):
             Importance sampler for the initial distribution, takes the number of particles and the data at time 0,
             and returns the importance sampled state and weights
         proposal: ImportanceKernel
-            Importance sampler from the proposal kernel, takes the state, weights and data and returns the new states and weights.
+            Importance sampler for the proposal kernel, takes the state, weights and data and returns the new states and weights.
         softness: float
             The trade-off parameter between a uniform and the usual resampling distribution.
         """
@@ -256,11 +257,96 @@ class StopGradientDPF(ParticleFilter):
             Importance sampler for the initial distribution, takes the number of particles and the data at time 0,
             and returns the importance sampled state and weights
         proposal: ImportanceKernel
-            Importance sampler from the proposal kernel, takes the state, weights and data and returns the new states and weights.
+            Importance sampler for the proposal kernel, takes the state, weights and data and returns the new states and weights.
         """
         super().__init__(initial_proposal, stop_gradient(resampling_generator), proposal)
 
+class StabilisedStopGradientDPF(SIS):
+    def __init__(self,
+                 initial_proposal: ImportanceSampler,
+                 proposal: Callable[[Tensor, Tensor, int], Tensor],
+                 log_proposal_density: Callable[[Tensor, Tensor, Tensor, int], Tensor],
+                 log_posterior_density: Union[Callable[[Tensor, Tensor, Tensor, int] ,Tensor], None] = None,
+                 resampling_generator: torch.Generator = torch.default_generator) -> None:
+        """
+        The variance reduced version of the Stop Gradient DPF (A. Scibor and F. Wood
+        'Differentiable Particle Filtering without Modifying the Forward Pass' 2021).
 
+        This is less general than the Stop Gradient DPF and requires a specific form for the proposal.
+
+        Unlike most the Stop Gradient resampler the computational cost is quadratic in the number of particles.
+
+        Notes
+        -----
+        This particle filter directly targets the per-time-step marginal posterior rather than the posterior of complete trajectories.
+        In the bootstrap case the two are equivalent in their forward pass. But in general this filter should not be used as part of a procedure to sample trajectories.
+
+        Parameters
+        ----------
+        initial_proposal: ImportanceSampler
+            Importance sampler for the initial distribution, takes the number of particles and the data at time 0,
+            and returns the importance sampled state and weights
+        proposal: ImportanceKernels
+            Importance sampler for the proposal kernel, takes the state, weights and data and returns the new states and weights.
+        log_proposal_density: Callable[[Tensor, Tensor, Tensor, Tensor], Tensor]
+            Returns the density of the proposal model given the new state, old state, data, and discrete time.
+        log_posterior_density: Callable[[Tensor, Tensor, Tensor, Tensor], Tensor]
+            Returns the (unnormalised) density of the posterior model given the new state, old state, data, and discrete time.
+        resampling_generator:
+            The generator to track the resampling rng.
+        """
+
+        def _systematic(state: Tensor, weights: Tensor) -> Tuple[Tensor, Tensor, Tensor]:
+            with torch.no_grad():
+                offset = torch.rand((weights.size(0),), device=state.device, generator=resampling_generator)
+                cum_probs = torch.cumsum(torch.exp(weights), dim=1)
+                # No index can be above 1. and the last index must be exactly 1.
+                # Fix this in case of numerical errors
+                cum_probs = torch.where(cum_probs > 1., 1., cum_probs)
+                cum_probs[:, -1] = 1.
+                resampling_points = torch.arange(weights.size(1), device=state.device) + offset.unsqueeze(1)
+                sampled_indices = torch.searchsorted(cum_probs * weights.size(1), resampling_points)
+            return batched_select(state, sampled_indices), torch.zeros_like(weights), sampled_indices
+
+        def resampling(state: Tensor, weight: Tensor):
+            state, no_grad_weights, sampled_indices = _systematic(state, weight)
+            # Save computation if gradient is not required
+            resampled_weights = batched_select(weight, sampled_indices)
+            return state, resampled_weights - resampled_weights.detach()
+
+        class PF_initial_sampler(Module):
+            def __init__(self):
+                super().__init__()
+                self.initial_proposal = initial_proposal
+
+            def forward(self, n_particles: int, data_: Tensor) -> Tuple[Tensor, Tensor, Tensor]:
+                state, weight = self.initial_proposal(n_particles, data_)
+                weight, likelihood = normalise(weight)
+                return state, weight, likelihood
+
+
+
+        class StabPFSampler(Module):
+            def __init__(self):
+                super().__init__()
+                self.log_proposal_density = log_proposal_density
+                self.log_posterior_density = log_posterior_density
+                self.proposal = proposal
+
+
+            def forward(self, x, w, data_, t):
+                resampled_x, resampled_w = resampling(x, w)
+                state = self.proposal(resampled_x, data_, t)
+                expanded_state = state.unsqueeze(2).expand(-1, -1, resampled_x.size(1), -1)
+                resampled_x = resampled_x.unsqueeze(1).expand(-1, state.size(1), -1, -1)
+                weight_numerator = self.log_posterior_density(expanded_state, resampled_x, data_, t)
+                weight_denominator = self.log_proposal_density(expanded_state, resampled_x, data_, t)
+                resampled_w = resampled_w.unsqueeze(-1)
+                weight = torch.logsumexp(resampled_w + weight_numerator, dim =1)  - torch.logsumexp(resampled_w.detach() + weight_denominator, dim = 1)
+                weight, likelihood = normalise(weight)
+                return state, weight, likelihood
+
+        super().__init__(PF_initial_sampler(), StabPFSampler())
 
 class KernelDPF(ParticleFilter):
 
@@ -276,7 +362,7 @@ class KernelDPF(ParticleFilter):
                 Importance sampler for the initial distribution, takes the number of particles and the data at time 0,
                 and returns the importance sampled state and weights
             proposal: ImportanceKernel
-                Importance sampler from the proposal kernel, takes the state, weights and data and returns the new states and weights.
+                Importance sampler for the proposal kernel, takes the state, weights and data and returns the new states and weights.
             kernel: KernelMixture
                 The kernel mixture to convolve over the particles to form the KDE sampling distribution.
 

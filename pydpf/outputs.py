@@ -64,7 +64,7 @@ class ElBO_Loss(Module):
         Notes
         -----
         As an average of the log-likelihood, the ELBO estimates a Jensens' inequality lower bound to the mean log of the likelihood.
-        See C. Naesseth, S. Linderman, R. Ranganath, and D. Blei, 'Variational Sequential Monte-Carlo', 2018 for more information.
+        The SMC ELBO is not exactly analogous to the variation auto-encoder ELBO, see C. Naesseth, S. Linderman, R. Ranganath, and D. Blei, 'Variational Sequential Monte-Carlo', 2018 for more information.
         """
         super().__init__()
 

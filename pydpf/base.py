@@ -103,7 +103,7 @@ class constrained_parameter:
         def f():
             with torch.no_grad():
                 d = self.function(instance)
-                d[0].sub_(d[0]).add_(d[1])
+                d[0].data = d[1]
             return d[0]
 
         v = f()

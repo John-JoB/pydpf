@@ -49,7 +49,7 @@ def _load_file_csv(
 
 
 def _extract_tensor(
-    data: pl.DataFrame, prefix: str, series_id_column: str
+    data: pl.DataFrame, prefix: str, series_id_column: str, *, prefix_is_complete=False
 ) -> np.ndarray:
     """
     Extracts tensor data from a given DataFrame by selecting columns that match a specified prefix and grouping by a series ID column.
@@ -65,7 +65,10 @@ def _extract_tensor(
         B is the number of timesteps in each series, must be the same for all series (no padding is implemented yet),
         C is the number of elements in each timestep (number of columns prefixed by prefix).
     """
-    data = data.select([pl.col(f"^{prefix}.*$"), series_id_column])
+    if not prefix_is_complete:
+        data = data.select([pl.col(f"^{prefix}.*$"), series_id_column])
+    else:
+        data = data.select([pl.col(prefix), series_id_column])
     data_gb = data.group_by(series_id_column, maintain_order=True)
     tensor_list = []
     # key_list = []
@@ -107,7 +110,7 @@ def load_data_csv(
         tensor_dict["control"] = _extract_tensor(data, control_prefix, series_id_column)
 
     if time_column is not None:
-        tensor_dict["time"] = _extract_tensor(data, time_column, series_id_column)
+        tensor_dict["time"] = _extract_tensor(data, time_column, series_id_column, prefix_is_complete=True)
 
     current_index_end = 0
     output_dict = {}

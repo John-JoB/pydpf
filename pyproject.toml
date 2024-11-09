@@ -18,6 +18,7 @@ dependencies = [
             'numpy>=1.26.4',
             'numpydoc>=1.7.0',
             'joblib>=1.4.2',
-            'pandas>=2.2.2'
+            'pandas>=2.2.2',
+            'polars>=1.10'
 ]
 requires-python = ">=3.12"

@@ -7,6 +7,7 @@ from .base import Module
 from .resampling import systematic, soft, optimal_transport, stop_gradient, kernel_resampling
 from .distributions import KernelMixture
 from .utils import batched_select
+from .model_based_api import Filtering_Model
 
 """
 Python module for the core filtering algorithms. 
@@ -110,7 +111,7 @@ class ParticleFilter(SIS):
         Helper class for a common case of the SIS, the particle filter (Doucet and Johansen 2008), (Chopin and Papaspiliopoulos 2020).
         Applies a resampling step prior to sampling from the proposal kernel.
     """
-    def __init__(self, initial_proposal: ImportanceSampler, resampler: Resampler, proposal: ImportanceKernel) -> None:
+    def __init__(self, resampler: Resampler, initial_proposal: ImportanceSampler, proposal: ImportanceKernel) -> None:
         """
         The standard particle filter is a special case of the SIS algorithm. We construct the particle filtering proposal by first
         resampling particles from their population, then applying a proposal kernel restricted such that the particles depend only on the

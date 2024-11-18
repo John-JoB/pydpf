@@ -7,7 +7,7 @@ from .base import Module
 from .resampling import systematic, soft, optimal_transport, stop_gradient, kernel_resampling
 from .distributions import KernelMixture
 from .utils import batched_select
-from .model_based_api import Filtering_Model
+from .model_based_api import FilteringModel
 
 """
 Python module for the core filtering algorithms. 
@@ -58,7 +58,6 @@ class SIS(Module):
         initial_proposal: ImportanceKernelLikelihood
             A callable object that takes the number of particles and the data/observations at time-step zero and returns an importance sample
             of the posterior, i.e. particle position and log weights. Also returns the observation likelihood (if applicable).
-
         proposal: ImportanceKernelLikelihood
             A callable object that implements the proposal kernel. Takes the state and log weights at the previous time step,
             the discreet time index i.e. how many iterations the filter has run for; and the data/observations at the current time-step.
@@ -111,7 +110,7 @@ class ParticleFilter(SIS):
         Helper class for a common case of the SIS, the particle filter (Doucet and Johansen 2008), (Chopin and Papaspiliopoulos 2020).
         Applies a resampling step prior to sampling from the proposal kernel.
     """
-    def __init__(self, resampler: Resampler, initial_proposal: ImportanceSampler, proposal: ImportanceKernel) -> None:
+    def __init__(self, resampler: Resampler, SSM: FilteringModel = None, initial_proposal: ImportanceSampler = None, proposal: ImportanceKernel = None) -> None:
         """
         The standard particle filter is a special case of the SIS algorithm. We construct the particle filtering proposal by first
         resampling particles from their population, then applying a proposal kernel restricted such that the particles depend only on the
@@ -119,16 +118,17 @@ class ParticleFilter(SIS):
 
         Parameters
         ----------
-        initial_proposal: ImportanceSampler
-            A callable object that takes the number of particles and the data/observations at time-step zero and returns an importance sample
-            of the posterior, i.e. particle position and log weights.
-
-        resampler: Resampler:
+        resampler: Resampler
             The resampling algorithm to use. Takes teh state and log weights at the previous time-step and returns the state and log weights
             after resampling. Resampling algorithms must also return a third tensor. Used to report extra information about how the particles
             were chosen, in most cases the resampled indices; this is often useful for diagnostics. But, this basic implementation discards
             this tensor.
-
+        SSM: FilteringModel
+            A FilteringModel that represents the SSM (and optionally a proposal model). See the documentation of FilteringModel for more complete information.
+            If this parameter is not None then the values of initial_proposal and proposal are ignored.
+        initial_proposal: ImportanceSampler
+            A callable object that takes the number of particles and the data/observations at time-step zero and returns an importance sample
+            of the posterior, i.e. particle position and log weights.
         proposal: ImportanceKernel
             A callable object that implements the proposal kernel. Takes the state and log weights at the previous time step,
             the discreet time index i.e. how many iterations the filter has run for; and the data/observations at the current time-step.
@@ -136,6 +136,11 @@ class ParticleFilter(SIS):
             resultant algorithm to be properly a particle filter, this kernel should be restricted such that the particles depend only on the
             population at the previous time-step through the particle at the same index.
         """
+        if SSM is not None:
+            self.SSM = SSM
+            initial_proposal = SSM.get_prior_IS()
+            proposal = SSM.get_prior_IS()
+
         class PF_initial_sampler(Module):
             def __init__(self):
                 super().__init__()
@@ -169,20 +174,25 @@ class DPF(ParticleFilter):
     'Differentiable Particle Filters: End-to-End Learning with Algorithmic Priors' 2018.
     """
 
-    def __init__(self, initial_proposal: ImportanceSampler, proposal: ImportanceKernel, resampling_generator: torch.Generator = torch.default_generator) -> None:
+    def __init__(self, SSM: FilteringModel = None, initial_proposal: ImportanceSampler = None, proposal: ImportanceKernel = None, resampling_generator: torch.Generator = torch.default_generator) -> None:
         """
         Basic 'differentiable' particle filter, as described in R. Jonschkowski, D. Rastogi, O. Brock
         'Differentiable Particle Filters: End-to-End Learning with Algorithmic Priors' 2018.
 
         Parameters
         ----------
+        SSM: FilteringModel
+            A FilteringModel that represents the SSM (and optionally a proposal model). See the documentation of FilteringModel for more complete information.
+            If this parameter is not None then the values of initial_proposal and proposal are ignored.
         initial_proposal: ImportanceSampler
             Importance sampler for the initial distribution, takes the number of particles and the data at time 0,
             and returns the importance sampled state and weights
         proposal: ImportanceKernel
             Importance sampler for the proposal kernel, takes the state, weights and data and returns the new states and weights.
+        resampling_generator:
+            The generator to track the resampling rng.
         """
-        super().__init__(initial_proposal, systematic(resampling_generator), proposal)
+        super().__init__(systematic(resampling_generator), SSM, initial_proposal, proposal)
 
 class SoftDPF(ParticleFilter):
     """
@@ -190,12 +200,15 @@ class SoftDPF(ParticleFilter):
     'Particle Filter Networks with Application to Visual Localization' 2018).
     """
 
-    def __init__(self, initial_proposal: ImportanceSampler, proposal: ImportanceKernel, softness: float, resampling_generator: torch.Generator = torch.default_generator) -> None:
+    def __init__(self, SSM: FilteringModel = None, initial_proposal: ImportanceSampler = None, proposal: ImportanceKernel = None, softness: float = 0.7, resampling_generator: torch.Generator = torch.default_generator) -> None:
         """
         Differentiable particle filter with soft-resampling.
 
         Parameters
         ----------
+        SSM: FilteringModel
+            A FilteringModel that represents the SSM (and optionally a proposal model). See the documentation of FilteringModel for more complete information.
+            If this parameter is not None then the values of initial_proposal and proposal are ignored.
         initial_proposal: ImportanceSampler
             Importance sampler for the initial distribution, takes the number of particles and the data at time 0,
             and returns the importance sampled state and weights
@@ -203,18 +216,21 @@ class SoftDPF(ParticleFilter):
             Importance sampler for the proposal kernel, takes the state, weights and data and returns the new states and weights.
         softness: float
             The trade-off parameter between a uniform and the usual resampling distribution.
+        resampling_generator:
+            The generator to track the resampling rng.
         """
-        super().__init__(initial_proposal, soft(softness, resampling_generator), proposal)
+        super().__init__(soft(softness, resampling_generator), SSM, initial_proposal, proposal)
 
 class OptimalTransportDPF(ParticleFilter):
     """
     Differentiable particle filter with optimal transport resampling (A. Corenflos, J. Thornton, G. Deligiannidis and A. Doucet
     'Differentiable Particle Filtering via Entropy-Regularized Optimal Transport' 2021).
     """
-    def __init__(self, initial_proposal: ImportanceSampler,
-                 proposal: ImportanceKernel,
-                 regularisation: float,
-                 step_size: float,
+    def __init__(self, SSM: FilteringModel = None,
+                 initial_proposal: ImportanceSampler = None,
+                 proposal: ImportanceKernel = None,
+                 regularisation: float = 0.99,
+                 step_size: float = 0.9,
                  min_update_size: float = 0.01,
                  max_iterations: int = 100,
                  transport_gradient_clip: float = 1.
@@ -224,6 +240,9 @@ class OptimalTransportDPF(ParticleFilter):
 
         Parameters
         ----------
+        SSM: FilteringModel
+            A FilteringModel that represents the SSM (and optionally a proposal model). See the documentation of FilteringModel for more complete information.
+            If this parameter is not None then the values of initial_proposal and proposal are ignored.
         initial_proposal: ImportanceSampler
             Importance sampler for the initial distribution, takes the number of particles and the data at time 0,
             and returns the importance sampled state and weights
@@ -241,32 +260,40 @@ class OptimalTransportDPF(ParticleFilter):
         transport_gradient_clip: float
             The maximum per-element gradient of the transport matrix that should be passed. Higher valued gradients will be clipped to this value.
         """
-        super().__init__(initial_proposal, optimal_transport(regularisation, step_size, min_update_size, max_iterations, transport_gradient_clip), proposal)
+        super().__init__(optimal_transport(regularisation, step_size, min_update_size, max_iterations, transport_gradient_clip), SSM, initial_proposal, proposal)
 
 class StopGradientDPF(ParticleFilter):
     """
     Differentiable particle filter with stop-gradient resampling (A. Scibor and F. Wood
     'Differentiable Particle Filtering without Modifying the Forward Pass' 2021).
     """
-    def __init__(self, initial_proposal: ImportanceSampler, proposal: ImportanceKernel, resampling_generator: torch.Generator = torch.default_generator) -> None:
+    def __init__(self, SSM: FilteringModel = None, initial_proposal: ImportanceSampler = None, proposal: ImportanceKernel = None, resampling_generator: torch.Generator = torch.default_generator) -> None:
         """
         Differentiable particle filter with stop-gradient resampling.
 
         Parameters
         ----------
+        SSM: FilteringModel
+            A FilteringModel that represents the SSM (and optionally a proposal model). See the documentation of FilteringModel for more complete information.
+            If this parameter is not None then the values of initial_proposal and proposal are ignored.
         initial_proposal: ImportanceSampler
             Importance sampler for the initial distribution, takes the number of particles and the data at time 0,
             and returns the importance sampled state and weights
         proposal: ImportanceKernel
             Importance sampler for the proposal kernel, takes the state, weights and data and returns the new states and weights.
+        resampling_generator:
+            The generator to track the resampling rng.
         """
-        super().__init__(initial_proposal, stop_gradient(resampling_generator), proposal)
+        super().__init__(stop_gradient(resampling_generator), SSM, initial_proposal, proposal)
 
 class StabilisedStopGradientDPF(SIS):
+
+
     def __init__(self,
-                 initial_proposal: ImportanceSampler,
-                 proposal: Callable[[Tensor, Tensor, int], Tensor],
-                 log_proposal_density: Callable[[Tensor, Tensor, Tensor, int], Tensor],
+                 SSM: FilteringModel = None,
+                 initial_proposal: ImportanceSampler = None,
+                 proposal: Callable[[Tensor, Tensor, int], Tensor] = None,
+                 log_proposal_density: Callable[[Tensor, Tensor, Tensor, int], Tensor] = None,
                  log_posterior_density: Union[Callable[[Tensor, Tensor, Tensor, int] ,Tensor], None] = None,
                  resampling_generator: torch.Generator = torch.default_generator) -> None:
         """
@@ -284,6 +311,9 @@ class StabilisedStopGradientDPF(SIS):
 
         Parameters
         ----------
+        SSM: FilteringModel
+            A FilteringModel that represents the SSM (and optionally a proposal model). See the documentation of FilteringModel for more complete information.
+            If this parameter is not None then the values of initial_proposal and proposal are ignored.
         initial_proposal: ImportanceSampler
             Importance sampler for the initial distribution, takes the number of particles and the data at time 0,
             and returns the importance sampled state and weights
@@ -296,6 +326,26 @@ class StabilisedStopGradientDPF(SIS):
         resampling_generator:
             The generator to track the resampling rng.
         """
+        self.cached_density = None
+
+        if SSM is not None:
+            if not hasattr(SSM.dynamic_model, 'log_density'):
+                raise AttributeError("The dynamic model must implement a 'log_density' method for stabalised stop gradient resampling.")
+            self.SSM = SSM
+            initial_proposal = SSM.get_prior_IS()
+            if SSM.proposal_model is None:
+                proposal = SSM.dynamic_model.predict
+                #In the bootstrap formulation the proposal and dynamic models are the same. Save computation by caching the log_density
+                log_proposal_density = lambda new_state, old_state, data, t: self.cached_density
+                def posterior_and_cache_density(new_state, old_state, data, t):
+                    self.cached_density = SSM.dynamic_model.log_density(new_state, old_state, data, t)
+                    return self.cached_density + SSM.observation_model.score(new_state, data, t)
+                log_posterior_density = posterior_and_cache_density
+            else:
+                proposal = SSM.proposal_model.propose
+                log_proposal_density = SSM.log_proposal_density
+                log_posterior_density = lambda new_state, old_state, data, t : SSM.dynamic_model.log_density(new_state, old_state, data, t) + SSM.observation_model.score(new_state, data, t)
+
 
         def _systematic(state: Tensor, weights: Tensor) -> Tuple[Tensor, Tensor, Tensor]:
             with torch.no_grad():
@@ -311,7 +361,6 @@ class StabilisedStopGradientDPF(SIS):
 
         def resampling(state: Tensor, weight: Tensor):
             state, no_grad_weights, sampled_indices = _systematic(state, weight)
-            # Save computation if gradient is not required
             resampled_weights = batched_select(weight, sampled_indices)
             return state, resampled_weights - resampled_weights.detach()
 
@@ -324,7 +373,6 @@ class StabilisedStopGradientDPF(SIS):
                 state, weight = self.initial_proposal(n_particles, data_)
                 weight, likelihood = normalise(weight)
                 return state, weight, likelihood
-
 
 
         class StabPFSampler(Module):
@@ -351,7 +399,7 @@ class StabilisedStopGradientDPF(SIS):
 
 class KernelDPF(ParticleFilter):
 
-    def __init__(self, initial_proposal: ImportanceSampler, proposal: ImportanceKernel, kernel: KernelMixture) -> None:
+    def __init__(self, SSM: FilteringModel = None, initial_proposal: ImportanceSampler = None, proposal: ImportanceKernel = None, kernel: KernelMixture = None) -> None:
         """
             Differentiable particle filter with mixture kernel resampling (Younis and Sudderth 'Differentiable and Stable Long-Range Tracking of Multiple Posterior Modes' 2024).
 
@@ -359,6 +407,9 @@ class KernelDPF(ParticleFilter):
 
             Parameters
             ----------
+            SSM: FilteringModel
+                A FilteringModel that represents the SSM (and optionally a proposal model). See the documentation of FilteringModel for more complete information.
+                If this parameter is not None then the values of initial_proposal and proposal are ignored.
             initial_proposal: ImportanceSampler
                 Importance sampler for the initial distribution, takes the number of particles and the data at time 0,
                 and returns the importance sampled state and weights
@@ -372,5 +423,7 @@ class KernelDPF(ParticleFilter):
             kernel_resampler: Callable[[Tensor, Tensor], Tuple[Tensor, Tensor, Tensor]]:
                 A Module whose forward method implements kernel resampling.
         """
+        if kernel is None:
+            raise ValueError('Must specify a kernel mixture')
 
-        super().__init__(initial_proposal, kernel_resampling(kernel), proposal)
+        super().__init__(kernel_resampling(kernel), SSM, initial_proposal, proposal)

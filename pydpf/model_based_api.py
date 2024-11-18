@@ -1,22 +1,8 @@
 from .base import Module
-from abc import ABCMeta, abstractmethod
 from typing import Union
 
-class Filtering_Model(Module, metaclass=ABCMeta):
-    def __init__(self):
-        super().__init__()
 
-    @abstractmethod
-    def get_prior_IS(self):
-        pass
-
-    @abstractmethod
-    def get_prop_IS(self):
-        pass
-
-
-
-class SIS(Filtering_Model):
+class FilteringModel(Module):
     def __init__(self, dynamic_model:Module, observation_model:Module, prior_model:Module, initial_proposal_model: Union[Module, None] = None, proposal_model: Union[Module, None] = None):
         super().__init__()
         self.dynamic_model = dynamic_model

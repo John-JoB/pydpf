@@ -18,7 +18,7 @@ class FilteringMean(Module):
         super().__init__()
         self.function = function
 
-    def forward(self, state: Tensor, norm_weights: Tensor, likelihood, **data) -> Tensor:
+    def forward(self, state: Tensor, norm_weights: Tensor, **data) -> Tensor:
         return torch.einsum('ij..., ij -> i... ', self.function(state), torch.exp(norm_weights))
 
 class MSE_Loss(Module):
@@ -29,8 +29,6 @@ class MSE_Loss(Module):
 
         Parameters
         ----------
-        ground_truth: Tensor
-            The ground truth target values.
         function: Callable[[Tensor], Tensor]
             The function of the latent state to estimate.
         """
@@ -50,7 +48,7 @@ class LogLikelihoodFactors(Module):
         """
         super().__init__()
 
-    def forward(self, state: Tensor, norm_weights: Tensor, likelihood, data, time) -> Tensor:
+    def forward(self, likelihood, **kwargs) -> Tensor:
         return likelihood
 
 class ElBO_Loss(Module):
@@ -67,7 +65,7 @@ class ElBO_Loss(Module):
         """
         super().__init__()
 
-    def forward(self, state: Tensor, norm_weights: Tensor, likelihood, data, time):
+    def forward(self, likelihood, **kwargs):
         return -torch.mean(likelihood)
 
 
@@ -91,58 +89,26 @@ class PredictiveMean(Module):
         self.lag = lag
         self.function = function
 
-    def forward(self, state: Tensor, norm_weights: Tensor, likelihood, data, time):
+    def forward(self, state: Tensor, norm_weights: Tensor, data, time, **kwargs):
         prediction, new_weights = self.prediction_kernel(state, norm_weights, data[time:time+self.lag].squeeze(), time)
         return torch.einsum('ij...,ij...->i...', self.function(prediction), torch.exp(new_weights))
 
 
-class PredictionMSE_Loss(Module):
-
-    def __init__(self, ground_truth: Tensor, prediction_kernel: ImportanceKernel, lag: int, function: Callable[[Tensor], Tensor] = lambda x: x):
-        """
-        Get the per-timestep mean squared error of a function of the latent state compared to ground truth over a batch of filters for an n-step ahead prediction.
-
-        Parameters
-        ----------
-        ground_truth: Tensor
-            The ground truth target values. The first ground truth value is assumed to align with time zero.
-        prediction_kernel: ImportanceKernel
-            A function to importance sample from the predictive distribution n-steps ahead. Typically, this will entail be applying the bootstrap proposal n-times.
-        lag: int
-            How many steps ahead the prediction is being made.
-        function: Callable[[Tensor], Tensor]
-            The function of the latent state to estimate.
-        """
-        super().__init__()
-        self.prediction_kernel = prediction_kernel
-        self.ground_truth = ground_truth
-        self.lag = lag
-        self.function = function
-
-    def forward(self, state: Tensor, norm_weights: Tensor, likelihood, data, time):
-        prediction, new_weights = self.prediction_kernel(state, norm_weights, data[time:time + self.lag].squeeze(), time)
-        mean_pred = torch.einsum('ij...,ij...->i...', self.function(prediction), torch.exp(new_weights))
-        return torch.sum(torch.mean((self.ground_truth[time+self.lag] - mean_pred) ** 2, dim=0))
-
-        
-
 class NegLogDataLikelihood_Loss(Module):
 
-    def __init__(self, ground_truth: Tensor, kernel: KernelMixture):
+    def __init__(self, kernel: KernelMixture):
         """
         Get the negative log data likelihood per-timestep for a batch of kernel filters.
         This function applies a kernel density estimator over the particles and calculates the log likelihood of the ground truth given the KDE.
 
         Parameters
         ----------
-        ground_truth: Tensor
-            The ground truth target values
         kernel: KernelMixture
             The kernel density estimator.
         """
         super().__init__()
         self.KDE = kernel
-        self.ground_truth = ground_truth
 
-    def forward(self, state: Tensor, norm_weights: Tensor, likelihood, data, time):
-        return -self.KDE.log_density(self.ground_truth[time], state, norm_weights)
+
+    def forward(self, state: Tensor, weight: Tensor, ground_truth, **kwargs):
+        return -self.KDE.log_density(ground_truth, state, weight)

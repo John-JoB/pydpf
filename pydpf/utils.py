@@ -128,9 +128,9 @@ class doc_function:
 
 def MSE(prediction: Tensor, ground_truth: Tensor):
     return torch.sum(torch.mean((prediction - ground_truth) ** 2, dim=(0,1)))
-
+"""
 def add_kwargs(func):
-    """
+   
     Modifies a function inplace to take extra optional keyword arguments as **kwargs.
     The input function must not have a '**' argument.
     If func is a torch.nn.Module (or a pydpf.Module) then the modification is on the forward() method.
@@ -144,7 +144,7 @@ def add_kwargs(func):
     -------
     None
 
-    """
+    
     if isinstance(func, torch.nn.Module):
         try:
             func = func.__class__.forward
@@ -185,3 +185,5 @@ def add_kwargs(func):
                             code_obj.co_freevars,
                             code_obj.co_cellvars)
     func.__code__ = new_code_obj
+    
+"""

@@ -3,9 +3,7 @@ from typing import Tuple
 from types import FunctionType
 from functools import update_wrapper
 from torch import Tensor
-
-from IPython.extensions.autoreload import update_function
-from joblib.externals.cloudpickle import instance
+from types import CodeType
 
 
 def batched_select(tensor: Tensor, index: Tensor) -> Tensor:
@@ -130,3 +128,60 @@ class doc_function:
 
 def MSE(prediction: Tensor, ground_truth: Tensor):
     return torch.sum(torch.mean((prediction - ground_truth) ** 2, dim=(0,1)))
+
+def add_kwargs(func):
+    """
+    Modifies a function inplace to take extra optional keyword arguments as **kwargs.
+    The input function must not have a '**' argument.
+    If func is a torch.nn.Module (or a pydpf.Module) then the modification is on the forward() method.
+    If func is any other non-function object then the modification is on the __call__() method.
+
+    Parameters
+    ----------
+    func - Funtion to add **kwargs to.
+
+    Returns
+    -------
+    None
+
+    """
+    if isinstance(func, torch.nn.Module):
+        try:
+            func = func.__class__.forward
+        except AttributeError:
+            raise AttributeError(f"Module {func.__name__}  must implement the forward method.")
+    elif not isinstance(func, FunctionType):
+        try:
+            if isinstance(func, type):
+                func = func.__call__
+            else:
+                func = func.__class__.__call__
+        except AttributeError:
+            raise AttributeError(f"Object {func.__name__}  must be a function or implement the __call__ method.")
+    code_obj = func.__code__
+    #Raise error if function has a ** argument and it hasn't already been modified by this function.
+    if code_obj.co_flags & 0x08:
+        if code_obj.co_flags & 0x400:
+            return
+        raise AttributeError(f"Function {func.__name__} must not have a '**' argument.")
+    old_args = list(code_obj.co_varnames)
+    old_args.append('kwargs')
+    new_code_obj = CodeType(code_obj.co_argcount,
+                            code_obj.co_posonlyargcount,
+                            code_obj.co_kwonlyargcount,
+                            code_obj.co_nlocals + 1,
+                            code_obj.co_stacksize,
+                            code_obj.co_flags + 0x408,
+                            code_obj.co_code,
+                            code_obj.co_consts,
+                            code_obj.co_names,
+                            tuple(old_args),
+                            code_obj.co_filename,
+                            code_obj.co_name,
+                            code_obj.co_qualname,
+                            code_obj.co_firstlineno,
+                            code_obj.co_linetable,
+                            code_obj.co_exceptiontable,
+                            code_obj.co_freevars,
+                            code_obj.co_cellvars)
+    func.__code__ = new_code_obj

@@ -184,8 +184,6 @@ class _GeneralCovGaussian(Distribution):
         else:
             sample = torch.normal(0, 1, device=self.device, size=(*batch_size, *sample_size), generator=self.generator)
 
-
-
         means = self._unsqueeze_to_size(means, sample)
         if self.force_diagonal:
             cov = self._unsqueeze_to_size(cov, sample.dim(), 1)
@@ -355,7 +353,7 @@ class LinearGaussian(Distribution):
                 bias: Tensor,
                 cholesky_covariance: Tensor,
                 diagonal_cov: bool = False,
-                constrain_spectral_radius: Union[int, None] = None,
+                constrain_spectral_radius: Union[float, None] = None,
                 gradient_estimator: str = 'reparameterisation',
                 generator: Union[torch.Generator, None] = None):
 
@@ -396,7 +394,7 @@ class LinearGaussian(Distribution):
                 bias: Tensor,
                 cholesky_covariance: Tensor,
                 diagonal_cov: bool = False,
-                constrain_spectral_radius: Union[int, None] = None,
+                constrain_spectral_radius: Union[float, None] = None,
                 gradient_estimator: str = 'reparameterisation',
                 generator: Union[torch.Generator, None] = None):
         """

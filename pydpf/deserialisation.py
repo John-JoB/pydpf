@@ -2,13 +2,14 @@ import polars as pl
 from pathlib import Path
 from joblib import Parallel, delayed
 import numpy as np
+from typing import Tuple, Union
 
 
 def _load_directory_csv(
     directory: Path,
     *,
     processes=-1,
-) -> pl.DataFrame:
+) -> Tuple[pl.DataFrame, pl.DataFrame]:
     """
     Load and concatenate CSV files from a directory into a single DataFrame.
 
@@ -36,10 +37,19 @@ def _load_directory_csv(
         Parallel(n_jobs=processes)(
             delayed(read_helper)(file)
             for file in directory.iterdir()
-            if file.suffix == ".csv"
+            if file.suffix == ".csv" and not file.suffix == "series_metadata.csv"
         )
     )
     return pl.concat(read_output).sort("series_id", maintain_order=True)
+
+def _load_series_metadata_csv(file: Path):
+    series_metadata = pl.read_csv(file)
+    try:
+        series_metadata.get_column('series_id')
+        series_metadata = series_metadata.sort('series_id', ascending=True)
+    except:
+        series_metadata.with_row_index('series_id', 1)
+    return series_metadata
 
 
 def _load_file_csv(
@@ -82,22 +92,38 @@ def _extract_tensor(
 
 
 def load_data_csv(
-    data_path: Path,
+    data_path: Union[Path, str],
     *,
+    series_metadata_path : Union[Path, str, None] = None,
     series_id_column="series_id",
     state_prefix=None,
     observation_prefix="observation_",
     time_column=None,
     control_prefix=None,
 ):
+    if isinstance(data_path, str):
+        data_path = Path(data_path)
+    if isinstance(series_metadata_path, str):
+        series_metadata_path = Path(series_metadata_path)
+    series_metadata = None
     if data_path.is_dir():
-        data = _load_directory_csv(data_path, series_id_column=series_id_column)
+        data = _load_directory_csv(data_path)
+        if series_metadata_path is not None:
+            series_metadata = _load_series_metadata_csv(series_metadata_path)
+        else:
+            try:
+                series_metadata = _load_series_metadata_csv(data_path / "series_metadata.csv")
+            except FileNotFoundError:
+                pass
     elif data_path.is_file():
         data = _load_file_csv(data_path)
+        if series_metadata_path is not None:
+            series_metadata = _load_series_metadata_csv(series_metadata_path)
     else:
         raise ValueError("Invalid data path")
 
     tensor_dict = {}
+
 
     if state_prefix is not None:
         tensor_dict["state"] = _extract_tensor(data, state_prefix, series_id_column)
@@ -114,6 +140,10 @@ def load_data_csv(
 
     current_index_end = 0
     output_dict = {}
+    if series_metadata is not None:
+        output_dict["series_metadata"] = series_metadata.to_numpy()
+    else:
+        output_dict["series_metadata"] = None
     output_dict["indices"] = {}
     tensor_list = []
     for key, tensor in tensor_dict.items():
@@ -129,7 +159,7 @@ def load_data_csv(
 
     return output_dict
 
-
+'''
 TEST_PATH = Path(
     "Dynamical systems (synthetic)/Lorenz 96/data/L96_SYSTEM_2024-11-06_12-20-32_25_DIM_STATE_5_DIM_OBS_WITH_80.0PERCENT_SPARSITY/simulated_data.csv"
 )
@@ -143,3 +173,4 @@ test_loaded["tensor"][:, :, test_loaded["indices"]["observation"]][0]
 
 # time data for 12th series
 test_loaded["tensor"][:, :, test_loaded["indices"]["observation"]][11]
+'''

@@ -18,12 +18,12 @@ class FilteringMean(Module):
         super().__init__()
         self.function = function
 
-    def forward(self, state: Tensor, norm_weights: Tensor, likelihood, data, time) -> Tensor:
+    def forward(self, state: Tensor, norm_weights: Tensor, likelihood, **data) -> Tensor:
         return torch.einsum('ij..., ij -> i... ', self.function(state), torch.exp(norm_weights))
 
 class MSE_Loss(Module):
 
-    def __init__(self, ground_truth: Tensor, function: Callable[[Tensor], Tensor] = lambda x: x):
+    def __init__(self,function: Callable[[Tensor], Tensor] = lambda x: x):
         """
         Get the per-timestep mean squared error of a function of the latent state compared to ground truth over a batch of filters.
 
@@ -35,12 +35,11 @@ class MSE_Loss(Module):
             The function of the latent state to estimate.
         """
         super().__init__()
-        self.ground_truth = ground_truth
         self.mean = FilteringMean(function)
 
-    def forward(self, state: Tensor, norm_weights: Tensor, likelihood, data, time):
-        filter_mean = self.mean(state, norm_weights, likelihood, data, time)
-        return torch.mean(torch.sum((self.ground_truth[time] - filter_mean) ** 2, dim=-1))
+    def forward(self, state: Tensor, weight: Tensor, likelihood, ground_truth, **data):
+        filter_mean = self.mean(state, weight, likelihood)
+        return torch.mean(torch.sum((ground_truth - filter_mean) ** 2, dim=-1))
 
 class LogLikelihoodFactors(Module):
 

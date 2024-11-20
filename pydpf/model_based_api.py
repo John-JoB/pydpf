@@ -39,27 +39,31 @@ class FilteringModel(Module):
 
     def get_prior_IS(self):
         if self.initial_proposal_model is None:
-            def prior(n_particles, data):
-                state = self.prior_model.sample(n_particles, data)
-                weight = self.observation_model.score(state, data, 0)
+            def prior(n_particles, observation, **data):
+                state = self.prior_model.sample(batch_size = observation.size(0), n_particles = n_particles, **data)
+                weight = self.observation_model.score(state = state, observation = observation, **data)
                 return state, weight
         else:
-            def prior(n_particles, data):
-                state = self.initial_proposal_model.propose(n_particles, data)
-                weight = self.observation_model.score(state, data, 0) - self.initial_proposal_model.log_density(state, data) + self.prior_model.log_density(state, data)
+            def prior(n_particles, observation, **data):
+                state = self.initial_proposal_model.propose(batch_size = observation.size(0), n_particles = n_particles, observation = observation, **data)
+                weight = (self.observation_model.score(state = state, observation = observation, **data)
+                          - self.initial_proposal_model.log_density(state = state, observation = observation, **data)
+                          + self.prior_model.log_density(state = state, **data))
                 return state, weight
         return prior
 
 
     def get_prop_IS(self):
         if self.proposal_model is None:
-            def prop(state, weight, data, t):
-                new_state = self.dynamic_model.predict(state, data, t)
-                new_weight = weight + self.observation_model.score(new_state, data, t)
+            def prop(state, weight, observation, **data):
+                new_state = self.dynamic_model.predict(state, **data)
+                new_weight = weight + self.observation_model.score(new_state, observation = observation, **data)
                 return new_state, new_weight
         else:
-            def prop(state, weight, data, t):
-                new_state = self.dynamic_model.predict(state, data, t)
-                new_weight = weight + self.observation_model.score(new_state, data, t) - self.proposal_model.log_density(new_state, state, data, t) + self.dynamic_model.log_density(new_state, state, data, t)
+            def prop(state, weight, observation, **data):
+                new_state = self.dynamic_model.predict(state = state, observation = observation, **data)
+                new_weight = (weight + self.observation_model.score(state = new_state, observation = observation, **data)
+                              - self.proposal_model.log_density(state = new_state, prev_state = state, observation = observation, **data)
+                              + self.dynamic_model.log_density(state = new_state, prev_state = state, **data))
                 return new_state, new_weight
         return prop

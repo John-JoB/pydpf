@@ -40,7 +40,7 @@ class SIS(Module):
     SIS iteratively importance samples a Markov-Chain.
     An SIS algorithm is defined by supplying an initial distribution and a Markov kernel.
     """
-    def __init__(self, initial_proposal: ImportanceSamplerLikelihood, proposal: ImportanceKernelLikelihood):
+    def __init__(self, initial_proposal: Callable = None, proposal: Callable =None):
         """
         Module that represents a sequential importance sampling (SIS) algorithm. A SIS algorthm is fully specified by its importance sampling
         procedures, the user should supply a proposal kernel that may depend on the time-step; and a special case for time 0.
@@ -49,7 +49,7 @@ class SIS(Module):
         -----
         This implementation is more general than the standard SIS algorithm. There is no independence requirements for the samples within a
         batch. This means that the particles can be drawn from an arbitrary joint distribution on depended on the data and the particles at
-        the previous time-step. This means that both the usual particle filter and interacting multiple model particle filter are special
+        the previous time-step. Both the usual particle filter and interacting multiple model particle filter are special
         cases of this algorithm. It's also possible to make the filters within a batch depend on each other, but don't do that.
 
 
@@ -65,11 +65,23 @@ class SIS(Module):
             Also returns the observation likelihood (if applicable).
         """
         super().__init__()
+        if initial_proposal is not None:
+            self._register_modules(initial_proposal, proposal)
+
+
+    def _register_functions(self, initial_proposal: Callable, proposal: Callable):
         self.initial_proposal = initial_proposal
         self.proposal = proposal
         self.aggregation_function = None
 
-    def forward(self, data: Tensor, n_particles: int, time_extent: int, aggregation_function: Aggregation) -> Tensor:
+    @staticmethod
+    def _get_time_data(t: int, **data: dict, ) -> dict:
+        time_dict = {k:v[t] for k, v in data.items() if k != 'series_metadata' and k != 'state' and v is not None}
+        if data['series_metadata'] is not None:
+            time_dict['series_metadata'] = data['series_metadata']
+        return time_dict
+
+    def forward(self, n_particles: int, time_extent: int, aggregation_function: Callable, observation, ground_truth = None, control = None, time = None, series_metadata = None) -> Tensor:
         """
         Run a forward pass of the SIS filter. To save memory during inference runs we allow the user to pass a function that takes a population
         of particles and processes this into an output for each time-step. For example, if the goal was the filtering mean then it would be
@@ -77,9 +89,7 @@ class SIS(Module):
         computation graph is stored.
 
         Parameters
-        ----------
-        data: Tensor
-            The data needed to run the filter.
+        ----------.
         n_particles: int
             The number of particles to draw per filter.
         time_extent: int
@@ -87,6 +97,8 @@ class SIS(Module):
         aggregation_function: Aggregation
             A Callable that processes the filtering outputs (the particle locations, the normalised log weights,
             the log sum of the unormalised weights, the data, the time-step) into an output per time-step.
+        data: Tensor
+            The data needed to run the filter
 
         Returns
         -------
@@ -94,14 +106,25 @@ class SIS(Module):
             The output of the filter, formed from stacking the output of aggregation_function for every time-step.
         """
         #Register any parameters
+        gt_exists = False
+        if ground_truth is not None:
+            gt_exists = True
         self.aggregation_function = aggregation_function
-        state, weight, likelihood = self.initial_proposal(n_particles, data[0])
-        temp = aggregation_function(state, weight, likelihood, data[0], 0)
-        output = torch.empty((time_extent+1, *temp.size()), device = data.device, dtype=torch.float32)
+        time_data = self._get_time_data(0, observation = observation, control = control, time = time, series_metadata = series_metadata)
+        state, weight, likelihood = self.initial_proposal(n_particles = n_particles, **time_data)
+        if gt_exists:
+            temp = aggregation_function(state = state, weight = weight, likelihood = likelihood, ground_truth = ground_truth[0], **time_data)
+        else:
+            temp = aggregation_function(state = state, weight = weight, likelihood = likelihood, **time_data)
+        output = torch.empty((time_extent+1, *temp.size()), device = observation.device, dtype=torch.float32)
         output[0] = temp
-        for time in range(1, time_extent+1):
-            state, weight, likelihood = self.proposal(state, weight, data[time], time)
-            output[time] = aggregation_function(state, weight, likelihood, data[time], time)
+        for t in range(1, time_extent+1):
+            time_data = self._get_time_data(0, observation = observation, control = control, time = time, series_metadata = series_metadata)
+            state, weight, likelihood = self.proposal(state = state, weight = weight, **time_data)
+            if gt_exists:
+                output[t] = aggregation_function(state=state, weight=weight, likelihood=likelihood, ground_truth = ground_truth[t], **time_data)
+            else:
+                output[t] = aggregation_function(state=state, weight=weight, **time_data)
         return output
 
 
@@ -110,7 +133,7 @@ class ParticleFilter(SIS):
         Helper class for a common case of the SIS, the particle filter (Doucet and Johansen 2008), (Chopin and Papaspiliopoulos 2020).
         Applies a resampling step prior to sampling from the proposal kernel.
     """
-    def __init__(self, resampler: Resampler, SSM: FilteringModel = None, initial_proposal: ImportanceSampler = None, proposal: ImportanceKernel = None) -> None:
+    def __init__(self, resampler: Resampler, SSM: FilteringModel = None, initial_proposal: Callable = None, proposal: Callable = None) -> None:
         """
         The standard particle filter is a special case of the SIS algorithm. We construct the particle filtering proposal by first
         resampling particles from their population, then applying a proposal kernel restricted such that the particles depend only on the
@@ -136,37 +159,29 @@ class ParticleFilter(SIS):
             resultant algorithm to be properly a particle filter, this kernel should be restricted such that the particles depend only on the
             population at the previous time-step through the particle at the same index.
         """
+        super().__init__()
+        self.resampler = resampler
         if SSM is not None:
             self.SSM = SSM
-            initial_proposal = SSM.get_prior_IS()
-            proposal = SSM.get_prior_IS()
+            self.SIRS_initial_proposal = SSM.get_prior_IS()
+            self.SIRS_proposal = SSM.get_prop_IS()
+        else:
+            self.SIRS_initial_proposal = initial_proposal
+            self.SIRS_proposal = proposal
 
-        class PF_initial_sampler(Module):
-            def __init__(self):
-                super().__init__()
-                self.initial_proposal = initial_proposal
+        def initial_sampler(n_particles: int, **data):
+            state, weight = self.SIRS_initial_proposal(n_particles=n_particles, **data)
+            weight, likelihood = normalise(weight)
+            return state, weight, likelihood
 
-            def forward(self, n_particles: int, data_: Tensor) -> Tuple[Tensor, Tensor, Tensor]:
-                state, weight = self.initial_proposal(n_particles, data_)
-                weight, likelihood = normalise(weight)
-                return state, weight, likelihood
+        def pf_sampler(state, weight, **data):
+            resampled_x, resampled_w = self.resampler(state, weight)
+            initial_likelihood = torch.logsumexp(resampled_w, dim=-1)
+            state, weight = self.SIRS_proposal(state=resampled_x, weight=resampled_w, **data)
+            weight, likelihood = normalise(weight)
+            return state, weight, likelihood - initial_likelihood
 
-
-        class PF_sampler(Module):
-            def __init__(self):
-                super().__init__()
-                self.resampler = resampler
-                self.proposal = proposal
-
-            def forward(self, x, w, data_, t):
-                resampled_x, resampled_w = self.resampler(x, w)
-                initial_likelihood = torch.logsumexp(resampled_w, dim=-1)
-                state, weight = self.proposal(resampled_x, resampled_w, data_, t)
-
-                weight , likelihood = normalise(weight)
-                return state, weight, likelihood - initial_likelihood
-
-        super().__init__(PF_initial_sampler(), PF_sampler())
+        self._register_functions(initial_sampler, pf_sampler)
 
 class DPF(ParticleFilter):
     """

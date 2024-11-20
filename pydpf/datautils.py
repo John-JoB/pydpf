@@ -4,10 +4,12 @@ from torch.utils.data import Dataset
 from typing import Union, Callable, Tuple
 import os
 import numpy as np
-import shutil
+from torch import Tensor
 from math import ceil
 from joblib import Parallel, delayed
-from csv import QUOTE_NONNUMERIC
+from .deserialisation import load_data_csv
+from pathlib import Path
+from itertools import chain
 
 
 
@@ -33,30 +35,60 @@ class StateSpaceDataset(Dataset):
         At the moment I only give functionality to load entire data set into RAM/VRAM.
         Might give the option to load lazily in the future, if required.
     '''
-    def __init__(self, dir_path: str, device: Union[str, torch.device] = torch.device('cpu'), processes: int = -1) -> None:
+    def __init__(self,
+                 data_path: Path,
+                 *,
+                 series_id_column="series_id",
+                 state_prefix=None,
+                 observation_prefix="observation_",
+                 time_column=None,
+                 control_prefix=None,
+                 device = torch.device('cpu')
+             ):
         self.device = device
+        self.data = load_data_csv(data_path, series_id_column = series_id_column, state_prefix = state_prefix, observation_prefix = observation_prefix, time_column = time_column, control_prefix = control_prefix)
+        self.data['tensor'] = torch.from_numpy(self.data['tensor']).to(device=self.device, dtype=torch.float32)
+        self.data_order = []
+        self.observation = self.data['tensor'][:, :, self.data['indices']['observation']]
+        if state_prefix is not None:
+            self.state = self.data['tensor'][:, :, self.data['indices']['state']]
+            self.data_order.append('state')
+        self.data_order.append('observation')
+        if time_column is not None:
+            self.time = self.data['tensor'][:, :, self.data['indices']['time']]
+            self.data_order.append('time')
+        if control_prefix is not None:
+            self.control = self.data['tensor'][:, :, self.data['indices']['control']]
+            self.data_order.append('control')
+        self.metadata_exists = False
+        try:
+            self.series_metadata = torch.from_numpy(self.data['metadata']).to(device=self.device, dtype=torch.float32)
+            self.metadata_exists = True
+        except KeyError:
+            pass
 
-        def read_helper(file_: str):
-            nonlocal dir_path
-            file_data = pd.read_csv(os.path.join(dir_path, file_))
-            state_ = series_to_tensor(file_data['state'], device=self.device)
-            observation_ = series_to_tensor(file_data['observation'], device=self.device)
-            return state_, observation_
 
-        read_output = Parallel(n_jobs=processes)(delayed(read_helper)(file) for file in os.listdir(dir_path) if file.endswith('.csv'))
-        read_output = list(zip(*read_output))
-        state = torch.stack(read_output[0])
-        observation = torch.stack(read_output[1])
-        self.data = torch.cat((state, observation), dim =-1).contiguous()
-        self.state_dim = state.size(-1)
-        self.state = self.data[:, :, :self.state_dim]
-        self.observation = self.data[:,:,self.state_dim:]
 
     def __len__(self):
-        return self.state.size(0) #self.state.size(1)
+        return self.data['tensor'].size(0)
 
     def __getitem__(self, idx):
-        return self.data[idx]
+        if self.metadata_exists:
+            return self.data['tensor'][idx], self.data['metadata'][idx]
+        return self.data['tensor'][idx]
+
+    def collate(self, batch) -> Tuple[torch.Tensor, ...]:
+        #By default, the batch is the first dimension.
+        #Pass this function to collate_fn when defining a dataloader to make it the second.
+        #collated_batch = torch.utils.data.default_collate(batch)
+        if self.metadata_exists:
+            batch = tuple(zip(*batch))
+            collated_data = torch.stack(batch[0], dim=0).transpose(0, 1)
+            collated_metadata = torch.stack(batch[1], dim=0)
+            return *(collated_data[:, :, self.data['indices'][data_category]].contiguous() for data_category in self.data_order), collated_metadata
+        else:
+            collated_batch = torch.stack(batch, dim=0).transpose(0, 1)
+            return *(collated_batch[:, :, self.data['indices'][data_category]].contiguous() for data_category in self.data_order),
 
     def normalise_dims(self, normalise_state: bool, scale_dims: str = 'all', individual_timesteps: bool = True, dims: Union[Tuple[int], None] = None) -> Tuple[torch.Tensor, torch.Tensor]:
         """
@@ -141,43 +173,86 @@ class StateSpaceDataset(Dataset):
                 self.observation.data = data.transpose(0, -1)
             return means.transpose(0, -1), std.transpose(0, -1)
 
+def _get_time_data(data: dict, t: int) -> dict:
+    time_dict = {k:v[t] for k, v in data.items() if k != 'series_metadata'}
+    try:
+        time_dict['series_metadata'] = data['series_metadata']
+    except KeyError:
+        pass
+    return time_dict
 
-    def collate(self, batch) -> Tuple[torch.Tensor, torch.Tensor]:
-        #By default, the batch is the first dimension.
-        #Pass this function to collate_fn when defining a dataloader to make it the second.
-        #collated_batch = torch.utils.data.default_collate(batch)
-        collated_batch = torch.stack(batch, dim=1)
-        return collated_batch[:, :, :self.state_dim].contiguous(), collated_batch[:, :, self.state_dim:].contiguous()
+
+def _format_to_save(state, observation, control, time):
+    data_list = [state.cpu().numpy(), observation.cpu().numpy()]
+    columns_list = [[f'state_{i + 1}' for i in range(state.size(-1))], [f'observation_{i + 1}' for i in range(observation.size(-1))]]
+    if control is not None:
+        data_list.append(control.cpu().numpy())
+        columns_list.append([f'control_{i + 1}' for i in range(state.size(-1))])
+    if time is not None:
+        data_list.append(time.unsqueeze(-1).cpu().numpy())
+        columns_list.append(['time'])
+    return np.concatenate(data_list, axis=-1), chain.from_iterable(columns_list)
+
+def _save_directory_csv(path:Path, start_index, state, observation, control, time, n_processes = -1):
+
+    data, columns_list = _format_to_save(state, observation, control, time)
+    def write_help(series_index):
+        df = pd.DataFrame(data[series_index - start_index])
+        df.columns = columns_list
+        df.to_csv(path / f'trajectory_{series_index + 1}.csv' ,  index=False)
+    Parallel(n_jobs=n_processes)(delayed(write_help)(series_index)
+                                 for series_index in range(start_index, start_index + state.size(0))
+                                 )
+
+def _save_file_csv(path:Path, state, observation, control, time, n_processes = -1):
+
+    data, columns_list = _format_to_save(state, observation, control, time)
+    def make_traj_frame(series_index):
+        df = pd.DataFrame(data[series_index])
+        df.columns = columns_list
+        df['series_index'] = series_index + 1
+        return df
+    df_list = list(Parallel(n_jobs=n_processes)(delayed(make_traj_frame)(series_index)
+                                                for series_index in range(len(data))
+                                                ))
+    total_df = pd.concat(df_list, axis=0)
+    total_df.to_csv(path, index=False)
 
 
-def simulate_to_folder(dir_path: str,
-                       prior: Callable[[Tuple[int]], torch.tensor],
-                       Markov_kernel: Callable[[torch.tensor, int], torch.tensor],
-                       observation_model: Callable[[torch.tensor, int], torch.tensor],
+def simulate_and_save(data_path: Union[Path, str],
+                       prior: Callable,
+                       Markov_kernel: Callable,
+                       observation_model: Callable,
                        time_extent: int,
                        n_trajectories: int,
                        batch_size: int,
                        device: Union[str, torch.device] = torch.device('cpu'),
-                       processes: int = -1):
-
-    if os.path.exists(dir_path):
-        print(f'Warning - folder already exists at {dir_path}, continuing could overwrite its data')
-        response = input('Continue? (y/n) ')
-        if response != 'Y' and response != 'y':
-            print('Halting')
-            return
+                       control: Tensor = None,
+                       time:Tensor = None,
+                       n_processes = -1):
+    if isinstance(data_path, str):
+        data_path = Path(data_path)
+    if data_path.suffix == '.csv':
+        state_list = []
+        observation_list = []
+        if data_path.is_file():
+            print(f'Warning - folder already exists at {data_path}, continuing could overwrite its data')
+            response = input('Continue? (y/n) ')
+            if response != 'Y' and response != 'y':
+                print('Halting')
+                return
+            os.remove(data_path)
     else:
-        os.mkdir(dir_path)
+        if data_path.is_dir():
+            print(f'Warning - folder already exists at {data_path}, continuing could overwrite its data')
+            response = input('Continue? (y/n) ')
+            if response != 'Y' and response != 'y':
+                print('Halting')
+                return
+        else:
+            os.mkdir(data_path)
 
-    def write_helper(trajectory_index: int, absolute_index :int, dir_path_: str, state_: torch.Tensor, observation_: torch.Tensor) -> None:
-        traj_state = tensor_to_series(state_[:, trajectory_index])
-        traj_observation = tensor_to_series(observation_[:, trajectory_index])
-        df = pd.concat([traj_state.rename('state'), traj_observation.rename('observation')], axis=1)
-        df.to_csv(os.path.join(dir_path_, f'{trajectory_index + absolute_index}.csv'), index=True, quoting=QUOTE_NONNUMERIC, mode='w')
-        return None
-
-
-
+    data_dict = {}
 
     n_batches = ceil(n_trajectories / batch_size)
 
@@ -185,19 +260,42 @@ def simulate_to_folder(dir_path: str,
         for batch in range(n_batches):
             print(f'Generating batch {batch + 1}/{n_batches}', end = '\r')
             if batch == (n_trajectories // batch_size):
-                temp = prior((n_trajectories - batch*batch_size,))
+                if control is not None:
+                    batch_control = control[batch * batch_size:]
+                    data_dict['control'] = batch_control[:, 0]
+                if time is not None:
+                    batch_time = time[batch * batch_size:]
+                    data_dict['time'] = batch_time[: 0]
+                temp = prior((n_trajectories - batch*batch_size,), **data_dict)
             else:
-                temp = prior((batch_size,))
-            state = torch.empty(size=(time_extent+1, temp.size(0), temp.size(1)), dtype=torch.float32, device=device)
-            state[0] = temp
-            temp = observation_model(state[0], 0)
-            observation = torch.empty(size=(time_extent+1, temp.size(0), temp.size(1)), device=device)
-            observation[0] = temp
+                if control is not None:
+                    batch_control = control[batch * batch_size : (batch + 1) * batch_size]
+                    data_dict['control'] = batch_control[:, 0]
+                if time is not None:
+                    batch_time = time[batch * batch_size : (batch + 1) * batch_size]
+                    data_dict['time'] = batch_time[: 0]
+                temp = prior((batch_size,), **data_dict)
+            state = torch.empty(size=(temp.size(0), time_extent+1, temp.size(1)), dtype=torch.float32, device=device)
+            state[:, 0] = temp
+            temp = observation_model(state[:, 0], **data_dict)
+            observation = torch.empty(size=(temp.size(0), time_extent+1, temp.size(1)), device=device)
+            observation[:, 0] = temp
             for t in range(time_extent):
-                state[t+1] = Markov_kernel(state[t], t+1)
-                observation[t+1] = observation_model(state[t+1], t+1)
-            print(f'Saving batch     {batch + 1}/{n_batches}', end='\r')
-            Parallel(n_jobs=processes)(delayed(lambda traj_index_: write_helper(traj_index_, batch_size * batch, dir_path, state, observation))(traj_index) for traj_index in range(observation.size(1)))
+                if control is not None:
+                    data_dict['control'] = batch_control[:, t]
+                if time is not None:
+                    data_dict['time'] = batch_time[:, t]
+                state[:, t+1] = Markov_kernel(state[:, t], **data_dict)
+                observation[:, t+1] = observation_model(state[:, t+1], **data_dict)
+            if data_path.suffix == '.csv':
+                state_list.append(state)
+                observation_list.append(observation)
+            else:
+                _save_directory_csv(data_path, batch_size*batch, state, observation, control, time, n_processes)
+        if data_path.suffix == '.csv':
+            state = torch.cat(state_list, dim=0)
+            observation = torch.cat(observation_list, dim=0)
+            _save_file_csv(data_path, state, observation, control, time)
     print('Done                  \n')
 
 

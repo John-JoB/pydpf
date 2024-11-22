@@ -8,8 +8,8 @@ from copy import deepcopy
 def _get_split_amounts(split, data_length):
     split_sum = sum(split)
     s =[0]*3
-    s[0] = int(split[0]/split_sum)*data_length
-    s[1] = int(split[1]/split_sum)*data_length
+    s[0] = int(split[0]*data_length/split_sum)
+    s[1] = int(split[1]*data_length/split_sum)
     s[2] = data_length - s[0] - s[1]
     if s[0] < 1:
         raise ValueError(f'Trying to assign too small a fraction to the train set')
@@ -17,6 +17,7 @@ def _get_split_amounts(split, data_length):
         raise ValueError(f'Trying to assign too small a fraction to the validation set')
     if s[2] < 1:
         raise ValueError(f'Trying to assign too small a fraction to the test set')
+    return s
 
 
 def train(dpf,
@@ -25,11 +26,11 @@ def train(dpf,
           epochs: int,
           n_particles: Tuple[int, int, int],
           batch_size: Tuple[int, int, int],
-          split_size: Tuple[int, int, int],
+          split_size: Tuple[float, float, float],
           device: torch.device,
           loss: pydpf.Module,
           metric: pydpf.Module = None,
-          data_loading_generator: torch.generator = torch.default_generator
+          data_loading_generator: torch.Generator = torch.default_generator
           ):
 
     batch_size = list(batch_size)

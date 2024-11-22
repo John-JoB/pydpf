@@ -375,7 +375,7 @@ class LinearGaussian(Distribution):
                         return self.weight, self.weight / spectral_radius
                 return self.weight, self.weight
 
-        dim = weight.size(-1)
+        dim = weight.size(-2)
         device = weight.device
         if (cholesky_covariance.size(0) != dim) or (cholesky_covariance.size(1) != dim):
             raise ValueError(f'Covariance must have the same dimensions as the weights first dimension, found {cholesky_covariance.size()} and {weight.size()}.')

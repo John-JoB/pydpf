@@ -17,11 +17,11 @@ class LorenzMeasurement(pydpf.Module):
 class LorenzDynamic(pydpf.Module):
     def __init__(self, state_dim:int, time_gap:float = 0.01, sub_steps:int = 1, device: Union[str, torch.device] = "cpu", generator: torch.Generator = torch.default_generator):
         super().__init__()
-        self.forcing = torch.nn.Parameter(torch.rand(device = device)*10)
+        self.forcing = torch.nn.Parameter(torch.rand(size=(1,), device = device).squeeze()*10)
         self.time_gap = time_gap
         self.sub_steps = sub_steps
-        self.jiggling_cov = torch.nn.Parameter(torch.eye(state_dim, device = state_dim) * torch.rand(size= (state_dim,1), device = device) * 0.1)
-        self.jiggling_dist = pydpf.distributions.MultivariateGaussian(mean=torch.zero((state_dim,), device = device), cholesky_covariance=self.jiggling_cov, diagonal_cov=True, generator=generator)
+        self.jiggling_cov = torch.nn.Parameter(torch.eye(state_dim, device = device) * torch.rand(size= (state_dim,1), device = device) * 0.1)
+        self.jiggling_dist = pydpf.distributions.MultivariateGaussian(mean=torch.zeros((state_dim,), device = device), cholesky_covariance=self.jiggling_cov, diagonal_cov=True, generator=generator)
 
     def Lorenz_derivative(self, state:Tensor, forcing:Tensor)->Tensor:
         derivative = torch.empty_like(state)
@@ -51,9 +51,9 @@ class LorenzPrior(pydpf.Module):
         super().__init__()
         self.device = device
         self.state_dim = state_dim
-        self.initial_range = torch.nn.Parameter(torch.rand(device = device, generator = generator)*0.1)
+        self.initial_range = torch.nn.Parameter(torch.rand(size=(1,), device = device, generator = generator).squeeze()*0.1)
 
     def sample(self, batch_size:int, n_particles:int):
 
         initial_state = torch.ones(size=(batch_size, n_particles, self.state_dim), device = self.device)
-        initial_state[:, :, 0] = torch.rand(size=(self.size(0), n_particles), device = self.device) * self.initial_range
+        initial_state[:, :, 0] = torch.rand(size=(batch_size, n_particles), device = self.device) * self.initial_range

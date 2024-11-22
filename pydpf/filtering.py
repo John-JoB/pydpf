@@ -40,7 +40,7 @@ class SIS(Module):
     SIS iteratively importance samples a Markov-Chain.
     An SIS algorithm is defined by supplying an initial distribution and a Markov kernel.
     """
-    def __init__(self, initial_proposal: Callable = None, proposal: Callable =None):
+    def __init__(self, *, initial_proposal: Callable = None, proposal: Callable =None):
         """
         Module that represents a sequential importance sampling (SIS) algorithm. A SIS algorthm is fully specified by its importance sampling
         procedures, the user should supply a proposal kernel that may depend on the time-step; and a special case for time 0.
@@ -77,11 +77,13 @@ class SIS(Module):
     @staticmethod
     def _get_time_data(t: int, **data: dict, ) -> dict:
         time_dict = {k:v[t] for k, v in data.items() if k != 'series_metadata' and k != 'state' and v is not None}
+        if data['time'] is not None and t>0:
+            time_dict['prev_time'] = data['time'][t-1]
         if data['series_metadata'] is not None:
             time_dict['series_metadata'] = data['series_metadata']
         return time_dict
 
-    def forward(self, n_particles: int, time_extent: int, aggregation_function: Callable, observation, ground_truth = None, control = None, time = None, series_metadata = None) -> Tensor:
+    def forward(self, n_particles: int, time_extent: int, aggregation_function: Callable, observation, *, gradient_regulariser: torch.autograd.Function = None, ground_truth = None, control = None, time = None, series_metadata = None) -> Tensor:
         """
         Run a forward pass of the SIS filter. To save memory during inference runs we allow the user to pass a function that takes a population
         of particles and processes this into an output for each time-step. For example, if the goal was the filtering mean then it would be
@@ -106,10 +108,11 @@ class SIS(Module):
             The output of the filter, formed from stacking the output of aggregation_function for every time-step.
         """
         #Register any parameters
+        if self.training or not torch.is_grad_enabled():
+            gradient_regulariser = None
         gt_exists = False
         if ground_truth is not None:
             gt_exists = True
-        self.aggregation_function = aggregation_function
         time_data = self._get_time_data(0, observation = observation, control = control, time = time, series_metadata = series_metadata)
         state, weight, likelihood = self.initial_proposal(n_particles = n_particles, **time_data)
         if gt_exists:
@@ -119,8 +122,12 @@ class SIS(Module):
         output = torch.empty((time_extent+1, *temp.size()), device = observation.device, dtype=torch.float32)
         output[0] = temp
         for t in range(1, time_extent+1):
-            time_data = self._get_time_data(0, observation = observation, control = control, time = time, series_metadata = series_metadata)
+            time_data = self._get_time_data(t, observation = observation, control = control, time = time, series_metadata = series_metadata)
+            prev_state = state
+            prev_weight = weight
             state, weight, likelihood = self.proposal(state = state, weight = weight, **time_data)
+            if not gradient_regulariser is None:
+                state, weight = gradient_regulariser(state = state, weight = weight, prev_state= prev_state, prev_weight = prev_weight)
             if gt_exists:
                 output[t] = aggregation_function(state=state, weight=weight, likelihood=likelihood, ground_truth = ground_truth[t], **time_data)
             else:
@@ -133,7 +140,7 @@ class ParticleFilter(SIS):
         Helper class for a common case of the SIS, the particle filter (Doucet and Johansen 2008), (Chopin and Papaspiliopoulos 2020).
         Applies a resampling step prior to sampling from the proposal kernel.
     """
-    def __init__(self, resampler: Resampler, SSM: FilteringModel = None, initial_proposal: Callable = None, proposal: Callable = None) -> None:
+    def __init__(self, resampler: Resampler, SSM: FilteringModel = None, *, initial_proposal: Callable = None, proposal: Callable = None) -> None:
         """
         The standard particle filter is a special case of the SIS algorithm. We construct the particle filtering proposal by first
         resampling particles from their population, then applying a proposal kernel restricted such that the particles depend only on the
@@ -189,7 +196,7 @@ class DPF(ParticleFilter):
     'Differentiable Particle Filters: End-to-End Learning with Algorithmic Priors' 2018.
     """
 
-    def __init__(self, SSM: FilteringModel = None, initial_proposal: ImportanceSampler = None, proposal: ImportanceKernel = None, resampling_generator: torch.Generator = torch.default_generator) -> None:
+    def __init__(self, SSM: FilteringModel = None,  resampling_generator: torch.Generator = torch.default_generator, *, initial_proposal: ImportanceSampler = None, proposal: ImportanceKernel = None,) -> None:
         """
         Basic 'differentiable' particle filter, as described in R. Jonschkowski, D. Rastogi, O. Brock
         'Differentiable Particle Filters: End-to-End Learning with Algorithmic Priors' 2018.
@@ -215,7 +222,7 @@ class SoftDPF(ParticleFilter):
     'Particle Filter Networks with Application to Visual Localization' 2018).
     """
 
-    def __init__(self, SSM: FilteringModel = None, initial_proposal: ImportanceSampler = None, proposal: ImportanceKernel = None, softness: float = 0.7, resampling_generator: torch.Generator = torch.default_generator) -> None:
+    def __init__(self, SSM: FilteringModel = None,  softness: float = 0.7, resampling_generator: torch.Generator = torch.default_generator, *, initial_proposal: ImportanceSampler = None, proposal: ImportanceKernel = None) -> None:
         """
         Differentiable particle filter with soft-resampling.
 
@@ -234,7 +241,7 @@ class SoftDPF(ParticleFilter):
         resampling_generator:
             The generator to track the resampling rng.
         """
-        super().__init__(soft(softness, resampling_generator), SSM, initial_proposal, proposal)
+        super().__init__(soft(softness, resampling_generator), SSM, initial_proposal=initial_proposal, proposal= proposal)
 
 class OptimalTransportDPF(ParticleFilter):
     """
@@ -242,13 +249,15 @@ class OptimalTransportDPF(ParticleFilter):
     'Differentiable Particle Filtering via Entropy-Regularized Optimal Transport' 2021).
     """
     def __init__(self, SSM: FilteringModel = None,
-                 initial_proposal: ImportanceSampler = None,
-                 proposal: ImportanceKernel = None,
                  regularisation: float = 0.99,
                  step_size: float = 0.9,
                  min_update_size: float = 0.01,
                  max_iterations: int = 100,
-                 transport_gradient_clip: float = 1.
+                 transport_gradient_clip: float = 1.,
+                 *,
+                 initial_proposal: ImportanceSampler = None,
+                 proposal: ImportanceKernel = None,
+
                  ) -> None:
         """
         Differentiable particle filter with optimal transport resampling.
@@ -275,7 +284,7 @@ class OptimalTransportDPF(ParticleFilter):
         transport_gradient_clip: float
             The maximum per-element gradient of the transport matrix that should be passed. Higher valued gradients will be clipped to this value.
         """
-        super().__init__(optimal_transport(regularisation, step_size, min_update_size, max_iterations, transport_gradient_clip), SSM, initial_proposal, proposal)
+        super().__init__(optimal_transport(regularisation, step_size, min_update_size, max_iterations, transport_gradient_clip), SSM, initial_proposal=initial_proposal, proposal=proposal)
 
 class StopGradientDPF(ParticleFilter):
     """
@@ -299,7 +308,7 @@ class StopGradientDPF(ParticleFilter):
         resampling_generator:
             The generator to track the resampling rng.
         """
-        super().__init__(stop_gradient(resampling_generator), SSM, initial_proposal, proposal)
+        super().__init__(stop_gradient(resampling_generator), SSM, initial_proposal=initial_proposal, proposal=proposal)
 
 class StabilisedStopGradientDPF(SIS):
 
@@ -410,11 +419,11 @@ class StabilisedStopGradientDPF(SIS):
                 weight, likelihood = normalise(weight)
                 return state, weight, likelihood
 
-        super().__init__(PF_initial_sampler(), StabPFSampler())
+        super().__init__(initial_proposal=PF_initial_sampler(), proposal= StabPFSampler())
 
 class KernelDPF(ParticleFilter):
 
-    def __init__(self, SSM: FilteringModel = None, initial_proposal: ImportanceSampler = None, proposal: ImportanceKernel = None, kernel: KernelMixture = None) -> None:
+    def __init__(self, SSM: FilteringModel = None, kernel: KernelMixture = None, *, initial_proposal: ImportanceSampler = None, proposal: ImportanceKernel = None) -> None:
         """
             Differentiable particle filter with mixture kernel resampling (Younis and Sudderth 'Differentiable and Stable Long-Range Tracking of Multiple Posterior Modes' 2024).
 
@@ -441,4 +450,4 @@ class KernelDPF(ParticleFilter):
         if kernel is None:
             raise ValueError('Must specify a kernel mixture')
 
-        super().__init__(kernel_resampling(kernel), SSM, initial_proposal, proposal)
+        super().__init__(kernel_resampling(kernel), SSM, initial_proposal=initial_proposal, proposal=proposal)

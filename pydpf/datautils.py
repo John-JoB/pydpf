@@ -36,7 +36,7 @@ class StateSpaceDataset(Dataset):
         Might give the option to load lazily in the future, if required.
     '''
     def __init__(self,
-                 data_path: Path,
+                 data_path: Union[Path,str],
                  *,
                  series_id_column="series_id",
                  state_prefix=None,
@@ -55,7 +55,7 @@ class StateSpaceDataset(Dataset):
             self.data_order.append('state')
         self.data_order.append('observation')
         if time_column is not None:
-            self.time = self.data['tensor'][:, :, self.data['indices']['time']]
+            self.time = self.data['tensor'][:, :, self.data['indices']['time']].squeeze()
             self.data_order.append('time')
         if control_prefix is not None:
             self.control = self.data['tensor'][:, :, self.data['indices']['control']]
@@ -88,7 +88,7 @@ class StateSpaceDataset(Dataset):
             return *(collated_data[:, :, self.data['indices'][data_category]].contiguous() for data_category in self.data_order), collated_metadata
         else:
             collated_batch = torch.stack(batch, dim=0).transpose(0, 1)
-            return *(collated_batch[:, :, self.data['indices'][data_category]].contiguous() for data_category in self.data_order),
+            return *(collated_batch[:, :, self.data['indices'][data_category]].squeeze().contiguous() for data_category in self.data_order),
 
     def normalise_dims(self, normalise_state: bool, scale_dims: str = 'all', individual_timesteps: bool = True, dims: Union[Tuple[int], None] = None) -> Tuple[torch.Tensor, torch.Tensor]:
         """

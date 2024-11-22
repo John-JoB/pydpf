@@ -3,7 +3,7 @@ from typing import Union
 
 
 class FilteringModel(Module):
-    def __init__(self, dynamic_model:Module, observation_model:Module, prior_model:Module, initial_proposal_model: Union[Module, None] = None, proposal_model: Union[Module, None] = None):
+    def __init__(self, *, dynamic_model:Module, observation_model:Module, prior_model:Module, initial_proposal_model: Union[Module, None] = None, proposal_model: Union[Module, None] = None):
         super().__init__()
         self.dynamic_model = dynamic_model
         self.observation_model = observation_model

@@ -145,7 +145,7 @@ class _GeneralCovGaussian(Distribution):
 
     def _check_conditions(self, condition_on: Tensor) -> None:
         if condition_on.device != self.device:
-            raise ValueError(f'condition_on should be on the same device as the distribution parameters, found {condition_on} and {self.device}.')
+            raise ValueError(f'condition_on should be on the same device as the distribution parameters, found {condition_on.device} and {self.device}.')
 
     def _init__(self,
                 mean: Callable[[Tensor], Tensor],

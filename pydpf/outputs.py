@@ -18,8 +18,8 @@ class FilteringMean(Module):
         super().__init__()
         self.function = function
 
-    def forward(self, state: Tensor, norm_weights: Tensor, **data) -> Tensor:
-        return torch.einsum('ij..., ij -> i... ', self.function(state), torch.exp(norm_weights))
+    def forward(self, *, state: Tensor, weight: Tensor, **data) -> Tensor:
+        return torch.einsum('ij..., ij -> i... ', self.function(state), torch.exp(weight))
 
 class MSE_Loss(Module):
 
@@ -35,8 +35,11 @@ class MSE_Loss(Module):
         super().__init__()
         self.mean = FilteringMean(function)
 
-    def forward(self, state: Tensor, weight: Tensor, likelihood, ground_truth, **data):
-        filter_mean = self.mean(state, weight, likelihood)
+    def forward(self, *, state: Tensor, weight: Tensor, ground_truth, **data):
+        filter_mean = self.mean(state = state, weight = weight)
+        #print(filter_mean[0])
+        #print(ground_truth[0])
+        #print(torch.sum((ground_truth - filter_mean) ** 2, dim=-1)[0])
         return torch.mean(torch.sum((ground_truth - filter_mean) ** 2, dim=-1))
 
 class LogLikelihoodFactors(Module):
@@ -89,7 +92,7 @@ class PredictiveMean(Module):
         self.lag = lag
         self.function = function
 
-    def forward(self, state: Tensor, norm_weights: Tensor, data, time, **kwargs):
+    def forward(self, *, state: Tensor, norm_weights: Tensor, data, time, **kwargs):
         prediction, new_weights = self.prediction_kernel(state, norm_weights, data[time:time+self.lag].squeeze(), time)
         return torch.einsum('ij...,ij...->i...', self.function(prediction), torch.exp(new_weights))
 
@@ -110,5 +113,5 @@ class NegLogDataLikelihood_Loss(Module):
         self.KDE = kernel
 
 
-    def forward(self, state: Tensor, weight: Tensor, ground_truth, **kwargs):
+    def forward(self, *, state: Tensor, weight: Tensor, ground_truth, **kwargs):
         return -self.KDE.log_density(ground_truth, state, weight)

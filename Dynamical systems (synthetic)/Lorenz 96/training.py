@@ -28,16 +28,17 @@ def train(dpf,
           batch_size: Tuple[int, int, int],
           split_size: Tuple[float, float, float],
           device: torch.device,
-          loss: pydpf.Module,
+          loss_function: pydpf.Module,
           metric: pydpf.Module = None,
-          data_loading_generator: torch.Generator = torch.default_generator
+          data_loading_generator: torch.Generator = torch.default_generator,
+          gradient_regulariser = None
           ):
 
     batch_size = list(batch_size)
     if metric is None:
-        metric = loss
+        metric = loss_function
 
-    data = pydpf.StateSpaceDataset(data_path, state_prefix='state', device = device)
+    data = pydpf.StateSpaceDataset(data_path, state_prefix='state', device = device, time_column='t')
     data_length = len(data)
     train_validation_test_split = _get_split_amounts(split_size, data_length)
     train_set, validation_set, test_set = torch.utils.data.random_split(data, train_validation_test_split, generator=data_loading_generator)
@@ -55,36 +56,45 @@ def train(dpf,
 
     for epoch in range(epochs):
         train_loss = []
-        for state, observation in train_loader:
+        total_size = 0
+        dpf.train()
+        for state, observation, time in train_loader:
             dpf.update()
             opt.zero_grad()
-            loss = dpf(n_particles[0], observation.size(0) - 1, loss, observation=observation, ground_truth=state)
+            loss = dpf(n_particles[0], observation.size(0) - 1, loss_function, observation=observation, ground_truth=state, gradient_regulariser = gradient_regulariser, time = time)
             loss = loss.mean()
             loss.backward()
-            train_loss.append(loss.item()/state.size(1))
+            train_loss.append(loss.item()*state.size(1))
             opt.step()
-        train_loss = np.sum(np.array(train_loss)) * len(train_loader)
+            total_size += state.size(1)
+        train_loss = np.sum(np.array(train_loss)) / total_size
         dpf.update()
+        dpf.eval()
         with torch.inference_mode():
+            total_size = 0
             validation_loss = []
-            for state, observation in validation_loader:
-                loss = dpf(n_particles[1], observation.size(0) - 1, metric, observation=observation, ground_truth=state)
+            for state, observation, time in validation_loader:
+                loss = dpf(n_particles[1], observation.size(0) - 1, metric, observation=observation, ground_truth=state, time = time)
                 loss = loss.mean()
-                validation_loss.append(loss.item()/state.size(1))
-            validation_loss = np.sum((np.array(train_loss)))
-        validation_loss = np.sum(np.array(validation_loss)) * len(validation_loader)
+                validation_loss.append(loss.item()*state.size(1))
+                total_size += state.size(1)
+            validation_loss = np.sum((np.array(validation_loss)))
+        validation_loss = np.sum(np.array(validation_loss)) / total_size
         if validation_loss < best_eval:
             best_eval = validation_loss
             best_dict = deepcopy(dpf.state_dict())
 
         print('                                                                                                    ', end='\r')
         print(f'epoch {epoch + 1}/{epochs}, train loss: {train_loss}, validation loss: {validation_loss}', end='\r')
-    test_loss = []
-    dpf = dpf.load_state_dict(best_dict)
-    for state, observation in test_loader:
-        loss = dpf(n_particles[1], observation.size(0) - 1, metric, observation=observation, ground_truth=state)
-        loss = loss.mean()
-        test_loss.append(loss.item())
-    test_loss = np.sum(np.array(test_loss)) * len(test_loader)
+    total_size = 0
+    with torch.inference_mode():
+        test_loss = []
+        dpf.load_state_dict(best_dict)
+        for state, observation, time in test_loader:
+            loss = dpf(n_particles[1], observation.size(0) - 1, metric, observation=observation, ground_truth=state, time = time)
+            loss = loss.mean()
+            test_loss.append(loss.item()*state.size(1))
+            total_size += state.size(1)
+    test_loss = np.sum(np.array(test_loss)) / total_size
     print('')
     print(f'Test loss: {test_loss}')

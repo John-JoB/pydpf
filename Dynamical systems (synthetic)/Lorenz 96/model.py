@@ -10,7 +10,7 @@ class LorenzMeasurement(pydpf.Module):
         observation_matrix = torch.nn.Parameter(torch.ones(size=(obs_dim, state_dim), device=device) * torch.rand(size=(obs_dim,state_dim), device = device, generator=generator))
         self.observation_dist = pydpf.distributions.LinearGaussian(observation_matrix, torch.zeros(size=(obs_dim,), device=device), root_measurement_cov, diagonal_cov=False, generator=generator)
 
-    def score(self, state:Tensor, observation:Tensor, time, prev_time=None) -> Tensor:
+    def score(self, state:Tensor, observation:Tensor, time, prev_time = None) -> Tensor:
        return self.observation_dist.log_density(observation.unsqueeze(1), state)
 
 
@@ -35,7 +35,6 @@ class LorenzDynamic(pydpf.Module):
         derivative[:,:,2:-1] = -state[:, :, :-3] * state[:, :, 1:-2] + state[:, :, 1:-2] * state[:, :, 3:] - state[:, :, 2:-1]
         return derivative + forcing
 
-
     def runge_kutta_update(self, state:Tensor, time_gap:float, sub_steps:int):
         state_now = state
         step_size = time_gap / sub_steps
@@ -47,8 +46,8 @@ class LorenzDynamic(pydpf.Module):
             state_now = state_now + step_size*(k1 + 2*k2 + 2*k3 + k4)/6
         return state_now + self.jiggling_dist.sample((state_now.shape[0], state_now.shape[1]))
 
-    def predict(self, state:Tensor, time, prev_time):
-        return self.runge_kutta_update(state, (time - prev_time).unsqueeze(1).unsqueeze(2), self.sub_steps)
+    def sample(self, prev_state:Tensor, time, prev_time):
+        return self.runge_kutta_update(prev_state, (time - prev_time).unsqueeze(1).unsqueeze(2), self.sub_steps)
 
 class LorenzPrior(pydpf.Module):
     def __init__(self, state_dim: int, device: Union[str, torch.device] = "cpu", generator: torch.Generator = torch.default_generator):

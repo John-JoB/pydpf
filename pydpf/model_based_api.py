@@ -14,17 +14,15 @@ class FilteringModel(Module):
             raise AttributeError("The observation model must implement a 'score' method")
         
         if self.proposal_model is None:
-            if not hasattr(self.dynamic_model, 'predict'):
+            if not hasattr(self.dynamic_model, 'sample'):
                 raise AttributeError("The dynamic model must implement a 'predict' method")
-            if not hasattr(self.observation_model, 'score'):
-                raise AttributeError("The observation model must implement a 'score' method")      
         else:
             if not hasattr(self.dynamic_model, 'log_density'):
                 raise AttributeError("The dynamic model must implement a 'log_density' method")
             if not hasattr(self.proposal_model, 'log_density'):
                 raise AttributeError("The proposal model must implement a 'log_density' method")
-            if not hasattr(self.proposal_model, 'propose'):
-                raise AttributeError("The proposal model must implement a 'propose' method")
+            if not hasattr(self.proposal_model, 'sample'):
+                raise AttributeError("The proposal model must implement a 'sample' method")
             
         if self.initial_proposal_model is None:
             if not hasattr(self.prior_model, 'sample'):
@@ -33,7 +31,7 @@ class FilteringModel(Module):
             if not hasattr(self.prior_model, 'log_density'):
                 raise AttributeError("The prior model must implement a 'log_density' method")
             if not hasattr(self.initial_proposal_model, 'propose'):
-                raise AttributeError("The initial proposal model must implement a 'propose' method")
+                raise AttributeError("The initial sample model must implement a 'sample' method")
             if not hasattr(self.initial_proposal_model, 'log_density'):
                 raise AttributeError("The initial proposal model must implement a 'log_density' method")
 
@@ -45,7 +43,7 @@ class FilteringModel(Module):
                 return state, weight
         else:
             def prior(n_particles, observation, **data):
-                state = self.initial_proposal_model.propose(batch_size = observation.size(0), n_particles = n_particles, observation = observation, **data)
+                state = self.initial_proposal_model.sample(batch_size = observation.size(0), n_particles = n_particles, observation = observation, **data)
                 weight = (self.observation_model.score(state = state, observation = observation, **data)
                           - self.initial_proposal_model.log_density(state = state, observation = observation, **data)
                           + self.prior_model.log_density(state = state, **data))
@@ -55,15 +53,15 @@ class FilteringModel(Module):
 
     def get_prop_IS(self):
         if self.proposal_model is None:
-            def prop(state, weight, observation, **data):
-                new_state = self.dynamic_model.predict(state, **data)
-                new_weight = weight + self.observation_model.score(new_state, observation = observation, **data)
+            def prop(prev_state, prev_weight, observation, **data):
+                new_state = self.dynamic_model.sample(prev_state = prev_state, **data)
+                new_weight = prev_weight + self.observation_model.score(new_state, observation = observation, **data)
                 return new_state, new_weight
         else:
-            def prop(state, weight, observation, **data):
-                new_state = self.dynamic_model.predict(state = state, observation = observation, **data)
-                new_weight = (weight + self.observation_model.score(state = new_state, observation = observation, **data)
-                              - self.proposal_model.log_density(state = new_state, prev_state = state, observation = observation, **data)
-                              + self.dynamic_model.log_density(state = new_state, prev_state = state, **data))
+            def prop(prev_state, prev_weight, observation, **data):
+                new_state = self.dynamic_model.sample(prev_state = prev_state, observation = observation, **data)
+                new_weight = (prev_weight + self.observation_model.score(state = new_state, observation = observation, **data)
+                              - self.proposal_model.log_density(state = new_state, prev_state = prev_state, observation = observation, **data)
+                              + self.dynamic_model.log_density(state = new_state, prev_state = prev_state, **data))
                 return new_state, new_weight
         return prop

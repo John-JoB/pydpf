@@ -1,5 +1,5 @@
 from typing import Tuple, Callable, Union
-from .custom_types import Resampler, ImportanceKernel, ImportanceSampler, Aggregation, ImportanceSamplerLikelihood, ImportanceKernelLikelihood
+from .custom_types import Resampler, ImportanceKernel, ImportanceSampler
 import torch
 from torch import Tensor
 from .utils import normalise
@@ -125,7 +125,7 @@ class SIS(Module):
             time_data = self._get_time_data(t, observation = observation, control = control, time = time, series_metadata = series_metadata)
             prev_state = state
             prev_weight = weight
-            state, weight, likelihood = self.proposal(state = state, weight = weight, **time_data)
+            state, weight, likelihood = self.proposal(prev_state = state, prev_weight = weight, **time_data)
             if not gradient_regulariser is None:
                 state, weight = gradient_regulariser(state = state, weight = weight, prev_state= prev_state, prev_weight = prev_weight)
             if gt_exists:
@@ -140,7 +140,7 @@ class ParticleFilter(SIS):
         Helper class for a common case of the SIS, the particle filter (Doucet and Johansen 2008), (Chopin and Papaspiliopoulos 2020).
         Applies a resampling step prior to sampling from the proposal kernel.
     """
-    def __init__(self, resampler: Resampler, SSM: FilteringModel = None, *, initial_proposal: Callable = None, proposal: Callable = None) -> None:
+    def __init__(self, resampler: Resampler = None, SSM: FilteringModel = None, *, initial_proposal: Callable = None, proposal: Callable = None) -> None:
         """
         The standard particle filter is a special case of the SIS algorithm. We construct the particle filtering proposal by first
         resampling particles from their population, then applying a proposal kernel restricted such that the particles depend only on the
@@ -167,6 +167,11 @@ class ParticleFilter(SIS):
             population at the previous time-step through the particle at the same index.
         """
         super().__init__()
+        if resampler is not None:
+            self._register_functions(resampler=resampler, SSM=SSM, initial_proposal=initial_proposal, proposal=proposal)
+
+    def _register_functions(self, resampler: Resampler = None, SSM: FilteringModel = None, *, initial_proposal: Callable = None, proposal: Callable = None):
+        super().__init__()
         self.resampler = resampler
         if SSM is not None:
             self.SSM = SSM
@@ -181,14 +186,14 @@ class ParticleFilter(SIS):
             weight, likelihood = normalise(weight)
             return state, weight, likelihood
 
-        def pf_sampler(state, weight, **data):
-            resampled_x, resampled_w = self.resampler(state, weight)
+        def pf_sampler(prev_state, prev_weight, **data):
+            resampled_x, resampled_w = self.resampler(prev_state, prev_weight)
             initial_likelihood = torch.logsumexp(resampled_w, dim=-1)
-            state, weight = self.SIRS_proposal(state=resampled_x, weight=resampled_w, **data)
+            state, weight = self.SIRS_proposal(prev_state=resampled_x, prev_weight=resampled_w, **data)
             weight, likelihood = normalise(weight)
             return state, weight, likelihood - initial_likelihood
 
-        self._register_functions(initial_sampler, pf_sampler)
+        super()._register_functions(initial_sampler, pf_sampler)
 
 class DPF(ParticleFilter):
     """

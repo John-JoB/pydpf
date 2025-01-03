@@ -67,7 +67,8 @@ class Module(TorchModule, metaclass=ABCMeta):
         """
         self._update()
         for child in self.modules():
-            child._update()
+            if isinstance(child, Module):
+                child._update()
 
 class constrained_parameter:
 

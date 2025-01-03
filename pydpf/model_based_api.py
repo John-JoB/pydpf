@@ -43,7 +43,7 @@ class FilteringModel(Module):
                 return state, weight
         else:
             def prior(n_particles, observation, **data):
-                state = self.initial_proposal_model.sample(batch_size = observation.size(0), n_particles = n_particles, observation = observation, **data)
+                state = self.initial_proposal_model.sample(batch_size = observation.size(0), n_particles = n_particles, **data)
                 weight = (self.observation_model.score(state = state, observation = observation, **data)
                           - self.initial_proposal_model.log_density(state = state, observation = observation, **data)
                           + self.prior_model.log_density(state = state, **data))
@@ -59,7 +59,7 @@ class FilteringModel(Module):
                 return new_state, new_weight
         else:
             def prop(prev_state, prev_weight, observation, **data):
-                new_state = self.dynamic_model.sample(prev_state = prev_state, observation = observation, **data)
+                new_state = self.dynamic_model.sample(prev_state = prev_state, **data)
                 new_weight = (prev_weight + self.observation_model.score(state = new_state, observation = observation, **data)
                               - self.proposal_model.log_density(state = new_state, prev_state = prev_state, observation = observation, **data)
                               + self.dynamic_model.log_density(state = new_state, prev_state = prev_state, **data))

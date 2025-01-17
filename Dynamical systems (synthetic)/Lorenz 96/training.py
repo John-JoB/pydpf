@@ -1,4 +1,5 @@
 import torch
+
 import pydpf
 from pathlib import Path
 from typing import Union, Tuple
@@ -18,6 +19,37 @@ def _get_split_amounts(split, data_length):
     if s[2] < 1:
         raise ValueError(f'Trying to assign too small a fraction to the test set')
     return s
+
+def test(pf,
+          data_path: Union[Path, str],
+          n_particles: int,
+          batch_size: int,
+          device: torch.device,
+          loss_function: pydpf.Module,
+          metric: pydpf.Module = None,
+          data_loading_generator: torch.Generator = torch.default_generator
+          ):
+    print('   ')
+    with torch.inference_mode():
+        if metric is None:
+            metric = loss_function
+
+        data = pydpf.StateSpaceDataset(data_path, state_prefix='state', device=device, time_column='t')
+        loader = torch.utils.data.DataLoader(data, batch_size=batch_size, shuffle=False, generator=data_loading_generator, collate_fn=data.collate)
+        losses = []
+        total_size = 0
+
+        for state, observation, time in loader:
+            pf.update()
+            loss = pf(n_particles, observation.size(0) - 1, loss_function, observation=observation, ground_truth=state, gradient_regulariser = None, time = time)
+            print(loss)
+            print(loss.size())
+            loss = loss.mean()
+            losses.append(loss.item()*state.size(1))
+            total_size += state.size(1)
+        train_loss = np.sum(np.array(losses))/total_size
+        print(f"loss = {train_loss}")
+
 
 
 def train(dpf,
@@ -62,12 +94,18 @@ def train(dpf,
             dpf.update()
             opt.zero_grad()
             loss = dpf(n_particles[0], observation.size(0) - 1, loss_function, observation=observation, ground_truth=state, gradient_regulariser = gradient_regulariser, time = time)
+            #if isinstance(dpf, pydpf.filtering.MHinSMCDPF):
+                #print(loss)
             loss = loss.mean()
             loss.backward()
             train_loss.append(loss.item()*state.size(1))
             opt.step()
             total_size += state.size(1)
+            #for n, p in dpf.named_parameters():
+             #   print(n)
+              #  print(p.grad)
         train_loss = np.sum(np.array(train_loss)) / total_size
+
         dpf.update()
         dpf.eval()
         with torch.inference_mode():

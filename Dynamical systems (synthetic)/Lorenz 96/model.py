@@ -120,6 +120,8 @@ class LorenzDynamic(pydpf.Module):
         state_0_mean = (state - (drift * time_gap))/root_gap
         return self.diffusion_dist.log_density(state_0_mean)
 
+    def d_log_density(self, state:Tensor, prev_state:Tensor, time, prev_time):
+
 class LorenzPrior(pydpf.Module):
     def __init__(self, state_dim: int, device: Union[str, torch.device] = "cpu", generator: torch.Generator = torch.default_generator, initial_range=None):
         super().__init__()
@@ -139,3 +141,6 @@ class LorenzPrior(pydpf.Module):
     def log_density(self, state:Tensor, time):
         state = state/self.initial_range
         return torch.where(state[:, :, 0] < 1, torch.zeros((state.size(0), state.size(1)), device = self.device), torch.ones((state.size(0), state.size(1)), device = self.device) * -1e8)
+
+    def d_log_density(self, state:Tensor, time):
+        return torch.zeros((state.size(0), state.size(1)), device = self.device)

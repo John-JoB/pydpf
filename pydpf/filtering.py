@@ -552,11 +552,8 @@ class MHinSMCDPF(SIS):
         self._register_functions(initial_proposal=MHinSMCIProp, proposal=MHinSMCProp)
 
 class SVFilter(SIS):
+    def __init__(self, SSM: SVPFModel):
+        super().__init__(initial_proposal=SSM.get_prior_SV(), proposal=SSM.get_prop_SV())
 
-
-
-
-    def __init__(self, SSM: SVPFModel, resampler: Resampler = None):
-        super().__init__()
 
 

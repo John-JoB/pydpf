@@ -78,30 +78,19 @@ def train(dpf,
     test_loader = torch.utils.data.DataLoader(test_set, batch_size=batch_size[2], shuffle=False, generator=data_loading_generator, collate_fn=data.collate)
     best_eval = torch.inf
     best_dict = None
-
     for epoch in range(epochs):
         train_loss = []
         total_size = 0
         dpf.train()
         for state, observation in train_loader:
-            #print(state[0])
             dpf.update()
             opt.zero_grad()
             loss = dpf(n_particles[0], observation.size(0) - 1, loss_function, observation=observation, ground_truth=state, gradient_regulariser = gradient_regulariser)
-            #print(loss)
             loss = loss.mean()
-            #print(loss)
             loss.backward()
-            #for n, p in dpf.named_parameters():
-             #   print(n)
-              #  print(p.grad)
-            #make_dot(loss).render("rnn_torchviz", format="png")
             train_loss.append(loss.item()*state.size(1))
             opt.step()
             total_size += state.size(1)
-            #for n, p in dpf.named_parameters():
-             #   print(n)
-              #  print(p.grad)
         train_loss = np.sum(np.array(train_loss)) / total_size
 
         dpf.update()

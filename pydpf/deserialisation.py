@@ -97,7 +97,7 @@ def load_data_csv(
     series_metadata_path : Union[Path, str, None] = None,
     series_id_column="series_id",
     state_prefix=None,
-    observation_prefix="observation_",
+    observation_prefix="observation",
     time_column=None,
     control_prefix=None,
 ):

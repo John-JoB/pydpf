@@ -364,6 +364,7 @@ class StabilisedStopGradientDPF(SIS):
         resampling_generator:
             The generator to track the resampling rng.
         """
+        super().__init__()
         self.cached_density = None
 
         if SSM is not None:
@@ -372,15 +373,15 @@ class StabilisedStopGradientDPF(SIS):
             self.SSM = SSM
             initial_proposal = SSM.get_prior_IS()
             if SSM.proposal_model is None:
-                proposal = SSM.dynamic_model.predict
+                proposal = SSM.dynamic_model.sample
                 #In the bootstrap formulation the proposal and dynamic models are the same. Save computation by caching the log_density
-                log_proposal_density = lambda new_state, old_state, data, t: self.cached_density
-                def posterior_and_cache_density(new_state, old_state, data, t):
-                    self.cached_density = SSM.dynamic_model.log_density(new_state, old_state, data, t)
-                    return self.cached_density + SSM.observation_model.score(new_state, data, t)
+                log_proposal_density = lambda **data: self.cached_density
+                def posterior_and_cache_density(prev_state, state, **data):
+                    self.cached_density = SSM.dynamic_model.log_density(state=state, prev_state=prev_state, **data).detach()
+                    return self.cached_density + SSM.observation_model.score(state, **data)
                 log_posterior_density = posterior_and_cache_density
             else:
-                proposal = SSM.proposal_model.propose
+                proposal = SSM.proposal_model.sample
                 log_proposal_density = SSM.log_proposal_density
                 log_posterior_density = lambda new_state, old_state, data, t : SSM.dynamic_model.log_density(new_state, old_state, data, t) + SSM.observation_model.score(new_state, data, t)
 
@@ -407,8 +408,8 @@ class StabilisedStopGradientDPF(SIS):
                 super().__init__()
                 self.initial_proposal = initial_proposal
 
-            def forward(self, n_particles: int, data_: Tensor) -> Tuple[Tensor, Tensor, Tensor]:
-                state, weight = self.initial_proposal(n_particles, data_)
+            def forward(self, n_particles: int, **data) -> Tuple[Tensor, Tensor, Tensor]:
+                state, weight = self.initial_proposal(n_particles, **data)
                 weight, likelihood = normalise(weight)
                 return state, weight, likelihood
 
@@ -421,19 +422,19 @@ class StabilisedStopGradientDPF(SIS):
                 self.proposal = proposal
 
 
-            def forward(self, x, w, data_, t):
-                resampled_x, resampled_w = resampling(x, w)
-                state = self.proposal(resampled_x, data_, t)
-                expanded_state = state.unsqueeze(2).expand(-1, -1, resampled_x.size(1), -1)
-                resampled_x = resampled_x.unsqueeze(1).expand(-1, state.size(1), -1, -1)
-                weight_numerator = self.log_posterior_density(expanded_state, resampled_x, data_, t)
-                weight_denominator = self.log_proposal_density(expanded_state, resampled_x, data_, t)
+            def forward(self, prev_state, prev_weight, **data):
+                resampled_x, resampled_w = resampling(prev_state, prev_weight)
+                state = self.proposal(prev_state = resampled_x, **data)
+                expanded_state = state.unsqueeze(2).expand(-1, -1, resampled_x.size(1), -1).flatten(1,2)
+                resampled_x = resampled_x.unsqueeze(1).expand(-1, state.size(1), -1, -1).flatten(1,2)
+                weight_numerator = self.log_posterior_density(state=expanded_state, prev_state=resampled_x, **data).reshape(state.size(0), state.size(1), state.size(1))
+                weight_denominator = self.log_proposal_density(state=expanded_state, prev_state=resampled_x, **data).reshape(state.size(0), state.size(1), state.size(1))
                 resampled_w = resampled_w.unsqueeze(-1)
-                weight = torch.logsumexp(resampled_w + weight_numerator, dim =1)  - torch.logsumexp(resampled_w.detach() + weight_denominator, dim = 1)
+                weight = torch.logsumexp(resampled_w + weight_numerator, dim =2)  - torch.logsumexp(resampled_w.detach() + weight_denominator, dim = 2)
                 weight, likelihood = normalise(weight)
                 return state, weight, likelihood
 
-        super().__init__(initial_proposal=PF_initial_sampler(), proposal= StabPFSampler())
+        self._register_functions(initial_proposal=PF_initial_sampler(), proposal= StabPFSampler())
 
 class KernelDPF(ParticleFilter):
 

@@ -1,4 +1,3 @@
-
 from typing import Tuple, Callable, Union
 from .custom_types import Resampler, ImportanceKernel, ImportanceSampler
 import torch
@@ -8,10 +7,10 @@ from .base import Module
 from .resampling import systematic, soft, optimal_transport, stop_gradient, kernel_resampling
 from .distributions import KernelMixture
 from .utils import batched_select
-from .model_based_api import FilteringModel, SVPFModel
-from .distributions.Gaussian import MultivariateGaussian
+from .model_based_api import FilteringModel
 from .base import DivergenceError
 from warnings import warn
+
 """
 Python module for the core filtering algorithms. 
 
@@ -69,7 +68,7 @@ class SIS(Module):
         """
         super().__init__()
         if initial_proposal is not None:
-            self._register_functions(initial_proposal, proposal)
+            self._register_modules(initial_proposal, proposal)
 
 
     def _register_functions(self, initial_proposal: Callable, proposal: Callable):
@@ -126,19 +125,19 @@ class SIS(Module):
         output[0] = temp
         for t in range(1, time_extent+1):
             try:
-                time_data = self._get_time_data(t, observation = observation, control = control, time = time, series_metadata = series_metadata)
+                time_data = self._get_time_data(t, observation=observation, control=control, time=time, series_metadata=series_metadata)
                 prev_state = state
                 prev_weight = weight
-                state, weight, likelihood = self.proposal(prev_state = state, prev_weight = weight, **time_data)
+                state, weight, likelihood = self.proposal(prev_state=state, prev_weight=weight, **time_data)
                 if not gradient_regulariser is None:
-                    state, weight = gradient_regulariser(state = state, weight = weight, prev_state= prev_state, prev_weight = prev_weight)
+                    state, weight = gradient_regulariser(state=state, weight=weight, prev_state=prev_state, prev_weight=prev_weight)
                 if gt_exists:
-                    output[t] = aggregation_function(state=state, weight=weight, likelihood=likelihood, ground_truth = ground_truth[t], **time_data)
+                    output[t] = aggregation_function(state=state, weight=weight, likelihood=likelihood, ground_truth=ground_truth[t], **time_data)
                 else:
                     output[t] = aggregation_function(state=state, weight=weight, **time_data)
             except DivergenceError as e:
                 warn(f'Detected divergence at time-step {t} with message:\n    {e} \nStopping iteration early.')
-                return output[:t-1]
+                return output[:t - 1]
         return output
 
 
@@ -197,14 +196,10 @@ class ParticleFilter(SIS):
             resampled_x, resampled_w = self.resampler(prev_state, prev_weight)
             initial_likelihood = torch.logsumexp(resampled_w, dim=-1)
             state, weight = self.SIRS_proposal(prev_state=resampled_x, prev_weight=resampled_w, **data)
-            if torch.any(torch.isnan(weight)):
-                print('pre-norm')
             try:
                 weight, likelihood = normalise(weight)
             except ValueError:
                 raise DivergenceError('Found batch where all weights are small.')
-            if torch.any(torch.isnan(weight)):
-                print('post-norm')
             return state, weight, likelihood - initial_likelihood
 
         super()._register_functions(initial_sampler, pf_sampler)
@@ -233,7 +228,7 @@ class DPF(ParticleFilter):
         resampling_generator:
             The generator to track the resampling rng.
         """
-        super().__init__(systematic(resampling_generator), SSM, initial_proposal=initial_proposal, proposal=proposal)
+        super().__init__(systematic(resampling_generator), SSM, initial_proposal, proposal)
 
 class SoftDPF(ParticleFilter):
     """
@@ -470,104 +465,3 @@ class KernelDPF(ParticleFilter):
             raise ValueError('Must specify a kernel mixture')
 
         super().__init__(kernel_resampling(kernel), SSM, initial_proposal=initial_proposal, proposal=proposal)
-
-class MetropolisHastings:
-    def __init__(self, prop):
-        self.prop = prop
-
-    def run(self, x, log_likelihood, time_steps):
-        old_likelihood = log_likelihood(x)
-        with torch.no_grad():
-            for t in range(time_steps):
-                candidate_x = self.prop.sample((x.size(0), x.size(1))) + x
-                new_likelihood = log_likelihood(candidate_x)
-                threshold = new_likelihood - old_likelihood
-                u = threshold > torch.log(torch.rand(threshold.size(), device = threshold.device))
-                x = torch.where(u.unsqueeze(-1), candidate_x, x)
-                old_likelihood = torch.where(u, new_likelihood, old_likelihood)
-        final_likelihood = log_likelihood(x.detach())
-        return x, final_likelihood
-
-class FakeMetropolisHastings:
-    def __init__(self, prop):
-        self.prop = prop
-
-    def run(self, x, log_likelihood, time_steps):
-        old_likelihood = log_likelihood(x)
-        with torch.no_grad():
-            for t in range(time_steps):
-                candidate_x = self.prop.sample((x.size(0), x.size(1))) + x
-                candidate_x[:, :, 1:-1] = 1
-                new_likelihood = log_likelihood(candidate_x)
-                threshold = new_likelihood - old_likelihood
-                u = threshold > torch.log(torch.rand(threshold.size(), device = threshold.device))
-                x = torch.where(u.unsqueeze(-1), candidate_x, x)
-                old_likelihood = torch.where(u, new_likelihood, old_likelihood)
-        final_likelihood = log_likelihood(x.detach())
-        return x, final_likelihood
-
-
-class MHinSMCDPF(SIS):
-    def __init__(self, SSM: FilteringModel = None, prop_var = None, MHtimesteps=None, *, initial_proposal: ImportanceSampler = None, proposal: ImportanceKernel = None) -> None:
-        """
-            Differentiable particle filter with mixture kernel resampling (Younis and Sudderth 'Differentiable and Stable Long-Range Tracking of Multiple Posterior Modes' 2024).
-
-
-
-            Parameters
-            ----------
-            SSM: FilteringModel
-                A FilteringModel that represents the SSM (and optionally a proposal model). See the documentation of FilteringModel for more complete information.
-                If this parameter is not None then the values of initial_proposal and proposal are ignored.
-            initial_proposal: ImportanceSampler
-                Importance sampler for the initial distribution, takes the number of particles and the data at time 0,
-                and returns the importance sampled state and weights
-            proposal: ImportanceKernel
-                Importance sampler for the proposal kernel, takes the state, weights and data and returns the new states and weights.
-            kernel: KernelMixture
-                The kernel mixture to convolve over the particles to form the KDE sampling distribution.
-
-            Returns
-            -------
-            kernel_resampler: Callable[[Tensor, Tensor], Tuple[Tensor, Tensor, Tensor]]:
-                A Module whose forward method implements kernel resampling.
-        """
-        super().__init__()
-        self.SSM = SSM
-        self.MH = MetropolisHastings(MultivariateGaussian(torch.zeros(prop_var.size(0), device=prop_var.device), torch.eye(prop_var.size(0), device = prop_var.device) * torch.sqrt(prop_var), generator=torch.Generator(device = prop_var.device)))
-        self.FMH = FakeMetropolisHastings(MultivariateGaussian(torch.zeros(prop_var.size(0), device=prop_var.device), torch.eye(prop_var.size(0), device = prop_var.device) * torch.sqrt(prop_var), generator=torch.Generator(device = prop_var.device)))
-
-        def MHLikelihood(state, prev_state, observation, **data):
-            kernel_densities = self.SSM.dynamic_model.log_density(state=state.unsqueeze(2).expand(-1, -1, state.size(1), -1).flatten(1, 2), prev_state=prev_state.unsqueeze(1).expand(-1, state.size(1), -1, -1).flatten(1, 2), **data)
-            kernel_densities = torch.logsumexp(kernel_densities.reshape(state.size(0), state.size(1), state.size(1)), dim=-1)
-            return kernel_densities + self.SSM.observation_model.score(state=state, observation=observation, **data)
-
-        def MHILikelihood(state, observation, **data):
-            kernel_density = self.SSM.prior_model.log_density(state=state, **data)
-            return kernel_density + self.SSM.observation_model.score(state=state, observation=observation, **data)
-
-        def MHinSMCIProp(n_particles, observation, **data):
-            initial_locs = self.SSM.prior_model.sample(n_particles=n_particles, batch_size=observation.size(0), **data)
-            MHL = lambda state: MHILikelihood(state, observation, **data)
-            new_x, l = self.FMH.run(initial_locs, MHL, MHtimesteps)
-            new_w = l - l.detach() - torch.log(torch.tensor(n_particles))
-            return new_x, new_w, torch.zeros((new_x.size(0)), device=new_x.device)
-
-        def MHinSMCProp(prev_state, prev_weight, observation, **data):
-            initial_locs = self.SSM.dynamic_model.sample(prev_state = prev_state, **data)
-            MHL = lambda state: MHLikelihood(state, prev_state, observation, **data)
-            new_x, l = self.MH.run(initial_locs, MHL, MHtimesteps)
-            new_w = prev_weight + l - l.detach()
-            return new_x, new_w, torch.zeros((new_x.size(0)), device=new_x.device)
-
-        self._register_functions(initial_proposal=MHinSMCIProp, proposal=MHinSMCProp)
-
-class SVFilter(SIS):
-    def __init__(self, SSM: SVPFModel, lr, alpha, iterations):
-        SSM.set_hyper_parameters(lr, alpha, iterations)
-        super().__init__()
-        self.SSM = SSM
-        super()._register_functions(initial_proposal=SSM.get_prior_SV(), proposal=SSM.get_prop_SV())
-
-
-

@@ -228,7 +228,7 @@ class DPF(ParticleFilter):
         resampling_generator:
             The generator to track the resampling rng.
         """
-        super().__init__(systematic(resampling_generator), SSM, initial_proposal, proposal)
+        super().__init__(systematic(resampling_generator), SSM, initial_proposal=initial_proposal, proposal=proposal)
 
 class SoftDPF(ParticleFilter):
     """

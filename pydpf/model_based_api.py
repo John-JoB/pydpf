@@ -1,13 +1,64 @@
 from .base import Module
 from typing import Union
+from torch import Tensor
+from .distributions import Distribution
+
+class obs_from_model(Module):
+    def __init__(self, dist:Distribution):
+        super().__init__()
+        self.dist = dist
+
+    def score(self, state:Tensor, observation:Tensor, **data) -> Tensor:
+        return self.dist.log_density(sample = observation.unsqueeze(1), condition_on=state)
+
+    def sample(self, state:Tensor, **data) -> Tensor:
+        return self.dist.sample(condition_on = state)
+
+class dyn_from_model(Module):
+    def __init__(self, dist:Distribution):
+        super().__init__()
+        self.dist = dist
+
+    def log_density(self, prev_state:Tensor, state:Tensor, **data)->Tensor:
+        return self.dist.log_density(condition_on=prev_state, sample=state)
+
+    def sample(self, prev_state:Tensor, **data) -> Tensor:
+        return self.dist.sample(condition_on=prev_state)
+
+class prior_from_model(Module):
+    def __init__(self, dist:Distribution):
+        super().__init__()
+        self.dist = dist
+
+    def log_density(self, state:Tensor, **data)->Tensor:
+        return self.dist.log_density(sample=state)
+
+    def sample(self, batch_size:int, n_particles:int, **data) -> Tensor:
+        return self.dist.sample(sample_size=(batch_size, n_particles))
 
 
 class FilteringModel(Module):
-    def __init__(self, *, dynamic_model:Module, observation_model:Module, prior_model:Module, initial_proposal_model: Union[Module, None] = None, proposal_model: Union[Module, None] = None):
+    def __init__(self, *, dynamic_model:Union[Module,Distribution],
+                 observation_model:[Module,Distribution],
+                 prior_model:[Module,Distribution],
+                 initial_proposal_model: Module = None,
+                 proposal_model: Module= None):
         super().__init__()
-        self.dynamic_model = dynamic_model
-        self.observation_model = observation_model
-        self.prior_model = prior_model
+        if isinstance(observation_model, Distribution):
+           self.observation_model = obs_from_model(observation_model)
+        else:
+            self.observation_model = observation_model
+        if isinstance(dynamic_model, Distribution):
+            self.dynamic_model = dyn_from_model(dynamic_model)
+        else:
+            self.dynamic_model = dynamic_model
+        if isinstance(prior_model, Distribution):
+            self.prior_model = prior_from_model(prior_model)
+        else:
+            self.prior_model = prior_model
+        if isinstance(initial_proposal_model, Distribution) or isinstance(proposal_model, Distribution):
+            #Don't allow proposal to be a Distribution as there's no obvious/intuitive way to marry the APIs.
+            raise TypeError('The non-bootstrap proposals cannot be Distribution objects.')
         self.proposal_model =  proposal_model
         self.initial_proposal_model = initial_proposal_model
         if not hasattr(self.observation_model, 'score'):

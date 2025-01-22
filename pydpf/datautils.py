@@ -8,21 +8,9 @@ from torch import Tensor
 from math import ceil
 from joblib import Parallel, delayed
 from .deserialisation import load_data_csv
+from .model_based_api import FilteringModel
 from pathlib import Path
 from itertools import chain
-
-
-
-def series_to_tensor(series: pd.Series, device: Union[str, torch.device] = torch.device('cpu')):
-    #This is really awkward, but I timed it, and it's not prohibitively slow if only done infrequently.
-    output = np.vstack((series.apply(lambda entry: np.fromstring(entry[1:-1], dtype=np.float32, sep=','))).to_numpy())
-    return torch.from_numpy(output).to(device=device)
-
-def tensor_to_series(tensor: torch.Tensor):
-    output = tensor.cpu().numpy()
-    output = pd.Series(list(output))
-    output = output.apply(lambda entry: np.array2string(entry, floatmode='unique', separator=','))
-    return output
 
 class StateSpaceDataset(Dataset):
     '''
@@ -40,7 +28,7 @@ class StateSpaceDataset(Dataset):
                  *,
                  series_id_column="series_id",
                  state_prefix=None,
-                 observation_prefix="observation_",
+                 observation_prefix="observation",
                  time_column=None,
                  control_prefix=None,
                  device = torch.device('cpu')
@@ -67,7 +55,17 @@ class StateSpaceDataset(Dataset):
         except KeyError:
             pass
 
+    @property
+    def observation_dimension(self):
+        return self.observation.shape[-1]
 
+    @property
+    def state_dimension(self):
+        return self.state.shape[-1]
+
+    @property
+    def control_dimension(self):
+        return self.control.shape[-1]
 
     def __len__(self):
         return self.data['tensor'].size(0)
@@ -191,52 +189,60 @@ def _format_to_save(state, observation, control, time):
     if time is not None:
         data_list.append(time.unsqueeze(-1).cpu().numpy())
         columns_list.append(['time'])
-    return np.concatenate(data_list, axis=-1), chain.from_iterable(columns_list)
+    return np.concatenate(data_list, axis=-1), list(chain.from_iterable(columns_list))
 
 def _save_directory_csv(path:Path, start_index, state, observation, control, time, n_processes = -1):
 
     data, columns_list = _format_to_save(state, observation, control, time)
-    def write_help(series_index):
-        df = pd.DataFrame(data[series_index - start_index])
+    def write_help(series_id):
+        df = pd.DataFrame(data[series_id - start_index])
         df.columns = columns_list
-        df.to_csv(path / f'trajectory_{series_index + 1}.csv' ,  index=False)
-    Parallel(n_jobs=n_processes)(delayed(write_help)(series_index)
-                                 for series_index in range(start_index, start_index + state.size(0))
+        df.to_csv(path / f'trajectory_{series_id + 1}.csv' ,  index=False)
+    Parallel(n_jobs=n_processes)(delayed(write_help)(series_id)
+                                 for series_id in range(start_index, start_index + state.size(0))
                                  )
 
 def _save_file_csv(path:Path, state, observation, control, time, n_processes = -1):
-
     data, columns_list = _format_to_save(state, observation, control, time)
-    def make_traj_frame(series_index):
-        df = pd.DataFrame(data[series_index])
+    def make_traj_frame(series_id):
+        df = pd.DataFrame(data[series_id])
         df.columns = columns_list
-        df['series_index'] = series_index + 1
+
+        df['series_id'] = series_id + 1
         return df
-    df_list = list(Parallel(n_jobs=n_processes)(delayed(make_traj_frame)(series_index)
-                                                for series_index in range(len(data))
-                                                ))
+    #df_list = list(Parallel(n_jobs=n_processes)(delayed(make_traj_frame)(series_id)
+                                               # for series_id in range(len(data))
+                                                #))
+    df_list = [make_traj_frame(series_id) for series_id in range(len(data))]
     total_df = pd.concat(df_list, axis=0)
     total_df.to_csv(path, index=False)
 
 
 def simulate_and_save(data_path: Union[Path, str],
-                       prior: Callable,
-                       Markov_kernel: Callable,
-                       observation_model: Callable,
-                       time_extent: int,
-                       n_trajectories: int,
-                       batch_size: int,
-                       device: Union[str, torch.device] = torch.device('cpu'),
-                       control: Tensor = None,
-                       time:Tensor = None,
-                       n_processes = -1):
+                    *,
+                    SSM: FilteringModel = None,
+                    prior: Callable = None,
+                    Markov_kernel: Callable = None,
+                    observation_model: Callable = None,
+                    time_extent: int,
+                    n_trajectories: int,
+                    batch_size: int,
+                    device: Union[str, torch.device] = torch.device('cpu'),
+                    control: Tensor = None,
+                    time:Tensor = None,
+                    n_processes = -1):
+
+    if SSM is not None:
+        prior = lambda _batch_size, **_data_dict:  torch.squeeze(SSM.prior_model.sample(_batch_size, 1, **_data_dict), 1)
+        observation_model = lambda _state, **_data_dict: SSM.observation_model.sample(state=_state, **_data_dict)
+        Markov_kernel = lambda _prev_state, **_data_dict: SSM.dynamic_model.sample(prev_state=_prev_state, **_data_dict)
     if isinstance(data_path, str):
         data_path = Path(data_path)
     if data_path.suffix == '.csv':
         state_list = []
         observation_list = []
         if data_path.is_file():
-            print(f'Warning - folder already exists at {data_path}, continuing could overwrite its data')
+            print(f'Warning - file already exists at {data_path}, continuing could overwrite its data')
             response = input('Continue? (y/n) ')
             if response != 'Y' and response != 'y':
                 print('Halting')
@@ -266,7 +272,8 @@ def simulate_and_save(data_path: Union[Path, str],
                 if time is not None:
                     batch_time = time[batch * batch_size:]
                     data_dict['time'] = batch_time[: 0]
-                temp = prior((n_trajectories - batch*batch_size,), **data_dict)
+                print()
+                temp = prior(n_trajectories - batch*batch_size, **data_dict)
             else:
                 if control is not None:
                     batch_control = control[batch * batch_size : (batch + 1) * batch_size]
@@ -274,7 +281,7 @@ def simulate_and_save(data_path: Union[Path, str],
                 if time is not None:
                     batch_time = time[batch * batch_size : (batch + 1) * batch_size]
                     data_dict['time'] = batch_time[: 0]
-                temp = prior((batch_size,), **data_dict)
+                temp = prior(batch_size, **data_dict)
             state = torch.empty(size=(temp.size(0), time_extent+1, temp.size(1)), dtype=torch.float32, device=device)
             state[:, 0] = temp
             temp = observation_model(state[:, 0], **data_dict)

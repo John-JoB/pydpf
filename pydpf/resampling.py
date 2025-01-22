@@ -400,7 +400,7 @@ def sinkhorn_loop(log_a: Tensor, log_b: Tensor, cost: Tensor, epsilon: float, th
 
 
 def optimal_transport(regularisation: float, step_size: float, min_update_size: float, max_iterations: int, transport_gradient_clip: float) -> Resampler:
-    """
+    r"""
     Returns a function for perfoming optimal transport resampling, (A. Corenflos, J. Thornton, G. Deligiannidis and A. Doucet
     'Differentiable Particle Filtering via Entropy-Regularized Optimal Transport' 2021)
 

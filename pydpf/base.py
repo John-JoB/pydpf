@@ -4,6 +4,15 @@ from abc import ABCMeta
 from typing import Any, Callable, Tuple
 import functools
 from torch import Tensor
+import warnings
+
+def custom_formatwarning(msg, *args, **kwargs):
+    return str(msg) + '\n'
+
+warnings.formatwarning = custom_formatwarning
+
+class DivergenceError(Exception):
+    pass
 
 
 class Module(TorchModule, metaclass=ABCMeta):
@@ -30,10 +39,9 @@ class Module(TorchModule, metaclass=ABCMeta):
     """
 
     def __init__(self):
-        self.updatable = True
         self.cached_properties = {}
         self.constrained_parameters = {}
-        #Need to iterate over __class__.__dict__ rather than dir(self) to by pass getattr()
+        #Need to iterate over __class__.__dict__ rather than dir(self) to bypass getattr()
         for attr, v in self.__class__.__dict__.items():
             if isinstance(v, cached_property):
                 self.cached_properties[attr] = v
@@ -70,6 +78,9 @@ class Module(TorchModule, metaclass=ABCMeta):
             if isinstance(child, Module):
                 child._update()
 
+class PropertyAttributeError(Exception):
+    pass
+
 class constrained_parameter:
 
 
@@ -103,7 +114,10 @@ class constrained_parameter:
         @torch.inference_mode(mode=False)
         def f():
             with torch.no_grad():
-                d = self.function(instance)
+                try:
+                    d = self.function(instance)
+                except AttributeError as e:
+                    raise PropertyAttributeError(e)
                 d[0].data = d[1]
             return d[0]
 
@@ -134,7 +148,10 @@ class cached_property:
 
     def __get__(self, instance, owner):
         if not hasattr(instance, self.value_name):
-            v = self.function(instance)
+            try:
+                v = self.function(instance)
+            except AttributeError as e:
+                raise PropertyAttributeError(e)
             instance.disallow_set_values = False
             setattr(instance, self.value_name, v)
             instance.disallow_set_values = True

@@ -62,6 +62,8 @@ def normalise(tensor: Tensor, dim: int = -1) -> Tuple[Tensor, Tensor]:
 
     """
     norm = torch.logsumexp(tensor, dim=dim, keepdim=True)
+    if torch.isinf(norm).any():
+        raise ValueError('Row where all values -inf encountered')
     return tensor - norm, norm
 
 def multiple_unsqueeze(tensor: Tensor, n: int, dim: int = -1) -> Tensor:

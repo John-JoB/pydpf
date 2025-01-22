@@ -1,6 +1,5 @@
 
 from typing import Tuple, Callable, Union
-
 from .custom_types import Resampler, ImportanceKernel, ImportanceSampler
 import torch
 from torch import Tensor
@@ -11,7 +10,8 @@ from .distributions import KernelMixture
 from .utils import batched_select
 from .model_based_api import FilteringModel, SVPFModel
 from .distributions.Gaussian import MultivariateGaussian
-
+from .base import DivergenceError
+from warnings import warn
 """
 Python module for the core filtering algorithms. 
 
@@ -125,16 +125,20 @@ class SIS(Module):
         output = torch.empty((time_extent+1, *temp.size()), device = observation.device, dtype=torch.float32)
         output[0] = temp
         for t in range(1, time_extent+1):
-            time_data = self._get_time_data(t, observation = observation, control = control, time = time, series_metadata = series_metadata)
-            prev_state = state
-            prev_weight = weight
-            state, weight, likelihood = self.proposal(prev_state = state, prev_weight = weight, **time_data)
-            if not gradient_regulariser is None:
-                state, weight = gradient_regulariser(state = state, weight = weight, prev_state= prev_state, prev_weight = prev_weight)
-            if gt_exists:
-                output[t] = aggregation_function(state=state, weight=weight, likelihood=likelihood, ground_truth = ground_truth[t], **time_data)
-            else:
-                output[t] = aggregation_function(state=state, weight=weight, **time_data)
+            try:
+                time_data = self._get_time_data(t, observation = observation, control = control, time = time, series_metadata = series_metadata)
+                prev_state = state
+                prev_weight = weight
+                state, weight, likelihood = self.proposal(prev_state = state, prev_weight = weight, **time_data)
+                if not gradient_regulariser is None:
+                    state, weight = gradient_regulariser(state = state, weight = weight, prev_state= prev_state, prev_weight = prev_weight)
+                if gt_exists:
+                    output[t] = aggregation_function(state=state, weight=weight, likelihood=likelihood, ground_truth = ground_truth[t], **time_data)
+                else:
+                    output[t] = aggregation_function(state=state, weight=weight, **time_data)
+            except DivergenceError as e:
+                warn(f'Detected divergence at time-step {t} with message:\n    {e} \nStopping iteration early.')
+                return output[:t-1]
         return output
 
 
@@ -193,7 +197,14 @@ class ParticleFilter(SIS):
             resampled_x, resampled_w = self.resampler(prev_state, prev_weight)
             initial_likelihood = torch.logsumexp(resampled_w, dim=-1)
             state, weight = self.SIRS_proposal(prev_state=resampled_x, prev_weight=resampled_w, **data)
-            weight, likelihood = normalise(weight)
+            if torch.any(torch.isnan(weight)):
+                print('pre-norm')
+            try:
+                weight, likelihood = normalise(weight)
+            except ValueError:
+                raise DivergenceError('Found batch where all weights are small.')
+            if torch.any(torch.isnan(weight)):
+                print('post-norm')
             return state, weight, likelihood - initial_likelihood
 
         super()._register_functions(initial_sampler, pf_sampler)
@@ -552,8 +563,11 @@ class MHinSMCDPF(SIS):
         self._register_functions(initial_proposal=MHinSMCIProp, proposal=MHinSMCProp)
 
 class SVFilter(SIS):
-    def __init__(self, SSM: SVPFModel):
-        super().__init__(initial_proposal=SSM.get_prior_SV(), proposal=SSM.get_prop_SV())
+    def __init__(self, SSM: SVPFModel, lr, alpha, iterations):
+        SSM.set_hyper_parameters(lr, alpha, iterations)
+        super().__init__()
+        self.SSM = SSM
+        super()._register_functions(initial_proposal=SSM.get_prior_SV(), proposal=SSM.get_prop_SV())
 
 
 

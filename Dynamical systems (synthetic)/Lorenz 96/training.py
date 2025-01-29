@@ -84,8 +84,7 @@ def train(dpf,
             best_eval = validation_loss
             best_dict = deepcopy(dpf.state_dict())
 
-        print('                                                                                                    ', end='\r')
-        print(f'epoch {epoch + 1}/{epochs}, train loss: {train_loss}, validation loss: {validation_loss}', end='\r')
+        print(f'epoch {epoch + 1}/{epochs}, train loss: {train_loss}, validation loss: {validation_loss}')
     total_size = 0
     with torch.inference_mode():
         test_loss = []

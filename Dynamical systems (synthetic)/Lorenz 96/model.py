@@ -15,27 +15,27 @@ class LorenzMeasurement(pydpf.Module):
 
 
 class LorenzDynamic(pydpf.Module):
-    def __init__(self, state_dim:int, time_gap:float = 0.01, sub_steps:int = 1, device: Union[str, torch.device] = "cpu", generator: torch.Generator = torch.default_generator):
+    def __init__(self, state_dim:int, sub_steps:int = 1, device: Union[str, torch.device] = "cpu", generator: torch.Generator = torch.default_generator, forcing = None, diffusion_cov = None):
         super().__init__()
-        self._forcing = torch.nn.Parameter(torch.rand(size=(1,), device = device, generator=generator).squeeze()*10)
-        self.time_gap = time_gap
         self.sub_steps = sub_steps
-        self.jiggling_cov = torch.nn.Parameter(torch.eye(state_dim, device = device) * torch.rand(size= (state_dim  ,1), device = device, generator=generator) * 0.1)
-        self.jiggling_dist = pydpf.distributions.MultivariateGaussian(mean=torch.zeros((state_dim,), device = device), cholesky_covariance=self.jiggling_cov, diagonal_cov=True, generator=generator)
+        if diffusion_cov is None:
+            self.diffusion_cov = torch.nn.Parameter(torch.eye(state_dim, device = device) * torch.rand(size= (state_dim  ,1), device = device, generator=generator))
+        else:
+            self.diffusion_cov = torch.sqrt(diffusion_cov)
+        if forcing is None:
+            self._forcing = torch.nn.Parameter(torch.rand(size=(1,), device=device, generator=generator).squeeze() * 10)
+        else:
+            self._forcing = torch.tensor(forcing, device = device)
+        self.diffusion_dist = pydpf.distributions.MultivariateGaussian(mean=torch.zeros((state_dim,), device = device), cholesky_covariance=self.diffusion_cov, diagonal_cov=True, generator=generator)
 
     @pydpf.constrained_parameter
     def forcing(self):
         return self._forcing, torch.abs(self._forcing)
 
     def Lorenz_derivative(self, state:Tensor, forcing:Tensor)->Tensor:
-        derivative = torch.empty_like(state)
-        derivative[:, :, -1] = -state[:, :, -3] * state[:, :, -2] + state[:, :, -2] * state[:, :, 0] - state[:, :, -1]
-        derivative[:, :, 0] = -state[:, :, -2] * state[:, :, -1] + state[:, :, -1] * state[:, :, 1] - state[:, :, 0]
-        derivative[:, :, 1] = -state[:, :, -1] * state[:, :, 0] + state[:, :, 0] * state[:, :, 2] - state[:, :, 1]
-        derivative[:,:,2:-1] = -state[:, :, :-3] * state[:, :, 1:-2] + state[:, :, 1:-2] * state[:, :, 3:] - state[:, :, 2:-1]
-        return derivative + forcing
+        return (torch.roll(state, -1, -1) - torch.roll(state, 2, -1)) * torch.roll(state, 1, -1) - state + forcing
 
-    def runge_kutta_update(self, state:Tensor, time_gap:float, sub_steps:int):
+    def runge_kutta_update(self, state:Tensor, time_gap:torch.Tensor, sub_steps:int):
         state_now = state
         step_size = time_gap / sub_steps
         for i in range(sub_steps):
@@ -44,10 +44,27 @@ class LorenzDynamic(pydpf.Module):
             k3 = self.Lorenz_derivative(state_now + step_size*k2/2, self.forcing)
             k4 = self.Lorenz_derivative(state_now + step_size*k3, self.forcing)
             state_now = state_now + step_size*(k1 + 2*k2 + 2*k3 + k4)/6
-        return state_now + self.jiggling_dist.sample((state_now.shape[0], state_now.shape[1]))
+        return state_now + self.diffusion_dist.sample((state_now.shape[0], state_now.shape[1]))
+
+    def euler_update(self, state:Tensor, time_gap:torch.Tensor, sub_steps:int):
+        state_now = state
+        step_size = time_gap / sub_steps
+        root_step_size = torch.sqrt(step_size)
+        for i in range(sub_steps):
+            state_now = state_now + self.Lorenz_derivative(state_now, self.forcing) * step_size + root_step_size * self.diffusion_dist.sample((state_now.shape[0], state_now.shape[1]))
+        return state_now
 
     def sample(self, prev_state:Tensor, time, prev_time):
-        return self.runge_kutta_update(prev_state, (time - prev_time).unsqueeze(1).unsqueeze(2), self.sub_steps)
+        return self.euler_update(prev_state, (time - prev_time).unsqueeze(1).unsqueeze(2), self.sub_steps)
+
+    def log_density(self, state:Tensor, prev_state:Tensor, time, prev_time):
+        if not self.sub_steps == 1:
+            raise ValueError('Can only estimate the density if a single Euler step is taken per time-step')
+        drift = self.Lorenz_derivative(prev_state, self.forcing)
+        time_gap = (time - prev_time).unsqueeze(1).unsqueeze(2)
+        root_gap = torch.sqrt(time_gap)
+        state_0_mean = (state - (drift * time_gap))/root_gap
+        return self.diffusion_dist.log_density(state_0_mean)
 
 class LorenzPrior(pydpf.Module):
     def __init__(self, state_dim: int, device: Union[str, torch.device] = "cpu", generator: torch.Generator = torch.default_generator):

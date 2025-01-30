@@ -101,7 +101,7 @@ class MultivariateGaussian(Distribution):
             The log density of each datum in the sample.
         """
         self.check_sample(sample)
-        prefactor = (-1/2) * sample.size(-1) - MultivariateGaussian.half_log_2pi - self.half_log_det_cov
+        prefactor = -sample.size(-1) * MultivariateGaussian.half_log_2pi - self.half_log_det_cov
         residuals = sample - self.mean
         exponent = (-1/2) * torch.sum((residuals @ self.inv_cholesky_cov.T)**2, dim=-1)
         return prefactor + exponent
@@ -211,7 +211,7 @@ class _GeneralCovGaussian(Distribution):
             residuals_cov = torch.linalg.solve_triangular(cov, residuals.unsqueeze(-1))
 
 
-        prefactor = (-1 / 2) * sample.size(-1) - MultivariateGaussian.half_log_2pi - half_log_det_cov
+        prefactor =  -sample.size(-1) * MultivariateGaussian.half_log_2pi - half_log_det_cov
 
         exponent = (-1 / 2) * torch.sum(residuals_cov ** 2, dim=-1)
         return prefactor + exponent

@@ -26,6 +26,7 @@ class ConditionalResampler(Module):
         super().__init__()
         self.resampler = resampler
         self.condition = condition
+        self.cache = {}
 
     def forward(self, state: Tensor, weight: Tensor) -> WeightedSample:
         with torch.no_grad():
@@ -39,6 +40,8 @@ class ConditionalResampler(Module):
         resampled_state , resampled_weight = self.resampler(masked_state, masked_weight)
         out_state[resample_mask] = resampled_state
         out_weight[resample_mask] = resampled_weight
+        self.cache = self.resampler.cache
+        self.cache['mask'] = resample_mask
         return out_state, out_weight
 
 def ESS_Condition(threshold):

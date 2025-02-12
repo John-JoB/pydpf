@@ -1,15 +1,16 @@
-from typing import Tuple, Callable, Union
+from typing import Callable
 from .custom_types import Resampler, ImportanceKernel, ImportanceSampler
 import torch
 from torch import Tensor
 from .utils import normalise
 from .base import Module
-from .resampling import systematic, soft, optimal_transport, stop_gradient, kernel_resampling
+from pydpf.resampling import SystematicResampler, SoftResampler, OptimalTransportResampler, StopGradientResampler, KernelResampler, VariationalResampler, SVGD_kernel_resampling, AuxiliaryResampler, MultinomialResampler
 from .distributions import KernelMixture
-from .utils import batched_select
 from .model_based_api import FilteringModel
 from .base import DivergenceError
 from warnings import warn
+from .conditional_resampling import ConditionalResampler
+from copy import copy
 
 """
 Python module for the core filtering algorithms. 
@@ -146,7 +147,7 @@ class ParticleFilter(SIS):
         Helper class for a common case of the SIS, the particle filter (Doucet and Johansen 2008), (Chopin and Papaspiliopoulos 2020).
         Applies a resampling step prior to sampling from the proposal kernel.
     """
-    def __init__(self, resampler: Resampler = None, SSM: FilteringModel = None, *, initial_proposal: Callable = None, proposal: Callable = None) -> None:
+    def __init__(self, resampler: Resampler = None, SSM: FilteringModel = None, use_REINFORCE_for_proposal:bool = False) -> None:
         """
         The standard particle filter is a special case of the SIS algorithm. We construct the particle filtering proposal by first
         resampling particles from their population, then applying a proposal kernel restricted such that the particles depend only on the
@@ -162,47 +163,217 @@ class ParticleFilter(SIS):
         SSM: FilteringModel
             A FilteringModel that represents the SSM (and optionally a proposal model). See the documentation of FilteringModel for more complete information.
             If this parameter is not None then the values of initial_proposal and proposal are ignored.
-        initial_proposal: ImportanceSampler
-            A callable object that takes the number of particles and the data/observations at time-step zero and returns an importance sample
-            of the posterior, i.e. particle position and log weights.
-        proposal: ImportanceKernel
-            A callable object that implements the proposal kernel. Takes the state and log weights at the previous time step,
-            the discreet time index i.e. how many iterations the filter has run for; and the data/observations at the current time-step.
-            And returns an importance sample of the posterior at the current time step, i.e. particle position and log weights. For the
-            resultant algorithm to be properly a particle filter, this kernel should be restricted such that the particles depend only on the
-            population at the previous time-step through the particle at the same index.
+        use_REINFORCE_for_proposal: bool
+            Whether to use the REINFORCE estimator for the gradient due to the particle proposal process. Applying REINFORCE to only some components of the
+            state space is not permitted with this API, such a use case would require a custom SIS process.
         """
+        self.REINFORCE = use_REINFORCE_for_proposal
+
         super().__init__()
         if resampler is not None:
-            self._register_functions(resampler=resampler, SSM=SSM, initial_proposal=initial_proposal, proposal=proposal)
+            self._register_functions(resampler=resampler, SSM=SSM)
 
-    def _register_functions(self, resampler: Resampler = None, SSM: FilteringModel = None, *, initial_proposal: Callable = None, proposal: Callable = None):
-        super().__init__()
+    def _register_functions(self, resampler: Resampler, SSM: FilteringModel):
+        self.SSM = SSM
         self.resampler = resampler
-        if SSM is not None:
-            self.SSM = SSM
-            self.SIRS_initial_proposal = SSM.get_prior_IS()
-            self.SIRS_proposal = SSM.get_prop_IS()
+
+        if self.REINFORCE:
+            if not hasattr(SSM.dynamic_model, 'log_density'):
+                raise AttributeError("The dynamic model must implement a 'log_density' method for REINFORCE.")
+            if not hasattr(SSM.prior_model, 'log_density'):
+                raise AttributeError("The prior model must implement a 'log_density' method for REINFORCE.")
+
+        if self.SSM.initial_proposal_model is None:
+            if self.REINFORCE:
+                def prior(n_particles, observation, **data):
+                    state = self.SSM.prior_model.sample(batch_size = observation.size(0), n_particles = n_particles, **data).detach()
+                    density = self.SSM.prior_model.log_density(state = state, **data)
+                    weight = self.SSM.observation_model.score(state = state, observation = observation, **data) + density - density.detach()
+                    return state, weight
+            else:
+                def prior(n_particles, observation, **data):
+                    state = self.SSM.prior_model.sample(batch_size = observation.size(0), n_particles = n_particles, **data)
+                    weight = self.SSM.observation_model.score(state = state, observation = observation, **data)
+                    return state, weight
         else:
-            self.SIRS_initial_proposal = initial_proposal
-            self.SIRS_proposal = proposal
+            if self.REINFORCE:
+                def prior(n_particles, observation, **data):
+                    state = self.initial_proposal_model.sample(batch_size = observation.size(0), n_particles = n_particles, **data)
+                    weight = (self.SSM.observation_model.score(state = state, observation = observation, **data)
+                              - self.SSM.initial_proposal_model.log_density(state = state, observation = observation, **data)
+                              + self.SSM.prior_model.log_density(state = state, **data))
+                    return state, weight
+            else:
+                def prior(n_particles, observation, **data):
+                    state = self.initial_proposal_model.sample(batch_size = observation.size(0), n_particles = n_particles, **data).detach()
+                    weight = (self.SSM.observation_model.score(state = state, observation = observation, **data)
+                              - self.SSM.initial_proposal_model.log_density(state = state, observation = observation, **data).detach()
+                              + self.SSM.prior_model.log_density(state = state, **data))
+                    return state, weight
+
+        if self.SSM.proposal_model is None:
+            if self.REINFORCE:
+                def prop(prev_state, prev_weight, observation, **data):
+                    new_state = self.SSM.dynamic_model.sample(prev_state = prev_state, **data).detach()
+                    density = self.SSM.dynamic_model.log_density(state=new_state, prev_state=prev_state, **data)
+                    new_weight = prev_weight + self.SSM.observation_model.score(new_state, observation = observation, **data) + density - density.detach()
+                    return new_state, new_weight
+            else:
+                def prop(prev_state, prev_weight, observation, **data):
+                    new_state = self.SSM.dynamic_model.sample(prev_state = prev_state, **data)
+                    new_weight = prev_weight + self.SSM.observation_model.score(new_state, observation = observation, **data)
+                    return new_state, new_weight
+        else:
+            if self.REINFORCE:
+                def prop(prev_state, prev_weight, observation, **data):
+                    new_state = self.SSM.dynamic_model.sample(prev_state = prev_state, **data).detach()
+                    new_weight = (prev_weight + self.SSM.observation_model.score(state = new_state, observation = observation, **data)
+                                  - self.SSM.proposal_model.log_density(state = new_state, prev_state = prev_state, observation = observation, **data).detach()
+                                  + self.SSM.dynamic_model.log_density(state = new_state, prev_state = prev_state, **data))
+                    return new_state, new_weight
+            else:
+                def prop(prev_state, prev_weight, observation, **data):
+                    new_state = self.SSM.dynamic_model.sample(prev_state = prev_state, **data)
+                    new_weight = (prev_weight + self.SSM.observation_model.score(state = new_state, observation = observation, **data)
+                                  - self.SSM.proposal_model.log_density(state = new_state, prev_state = prev_state, observation = observation, **data)
+                                  + self.SSM.dynamic_model.log_density(state = new_state, prev_state = prev_state, **data))
+                    return new_state, new_weight
+
 
         def initial_sampler(n_particles: int, **data):
-            state, weight = self.SIRS_initial_proposal(n_particles=n_particles, **data)
+            state, weight = prior(n_particles=n_particles, **data)
             weight, likelihood = normalise(weight)
             return state, weight, likelihood
 
-        def pf_sampler(prev_state, prev_weight, **data):
-            resampled_x, resampled_w = self.resampler(prev_state, prev_weight)
-            initial_likelihood = torch.logsumexp(resampled_w, dim=-1)
-            state, weight = self.SIRS_proposal(prev_state=resampled_x, prev_weight=resampled_w, **data)
-            try:
-                weight, likelihood = normalise(weight)
-            except ValueError:
-                raise DivergenceError('Found batch where all weights are small.')
-            return state, weight, likelihood - initial_likelihood
-
+        if isinstance(self.resampler, ConditionalResampler):
+            def pf_sampler(prev_state, prev_weight, **data):
+                resampled_x, resampled_w = self.resampler(prev_state, prev_weight, **data)
+                state, weight = prior(prev_state=resampled_x, prev_weight=resampled_w, **data)
+                try:
+                    weight, likelihood = normalise(weight)
+                except ValueError:
+                    raise DivergenceError('Found batch where all weights are small.')
+                return state, weight, torch.where(self.resampler.cache['mask'], likelihood, likelihood - normalise(resampled_w)[1])
+        else:
+            def pf_sampler(prev_state, prev_weight, **data):
+                resampled_x, resampled_w = self.resampler(prev_state, prev_weight, **data)
+                state, weight = prop(prev_state=resampled_x, prev_weight=resampled_w, **data)
+                try:
+                    weight, likelihood = normalise(weight)
+                except ValueError:
+                    raise DivergenceError('Found batch where all weights are small.')
+                return state, weight, likelihood
         super()._register_functions(initial_sampler, pf_sampler)
+
+
+class MarginalParticleFilter(SIS):
+    def __init__(self, resampler: Resampler = None, SSM: FilteringModel = None, use_REINFORCE_for_proposal:bool = False):
+        super().__init__()
+        self.REINFORCE = use_REINFORCE_for_proposal
+
+
+        super().__init__()
+        if resampler is not None:
+            self._register_functions(resampler=resampler, SSM=SSM)
+        if resampler is not None:
+            self._register_functions(resampler=resampler, SSM=SSM)
+
+    def _register_functions(self, resampler: Resampler, SSM: FilteringModel):
+        self.resampler = resampler
+        self.SSM = SSM
+
+        if self.REINFORCE:
+            if not hasattr(SSM.prior_model, 'log_density'):
+                raise AttributeError("The prior model must implement a 'log_density' method for REINFORCE.")
+
+        if not hasattr(SSM.dynamic_model, 'log_density'):
+            raise AttributeError("The dynamic model must implement a 'log_density' method for the marginal particle filter.")
+
+        if self.SSM.initial_proposal_model is None:
+            if self.REINFORCE:
+                def prior(n_particles, observation, **data):
+                    state = self.SSM.prior_model.sample(batch_size = observation.size(0), n_particles = n_particles, **data).detach()
+                    density = self.SSM.prior_model.log_density(state = state, **data)
+                    weight = self.SSM.observation_model.score(state = state, observation = observation, **data) + density - density.detach()
+                    return state, weight
+            else:
+                def prior(n_particles, observation, **data):
+                    state = self.SSM.prior_model.sample(batch_size = observation.size(0), n_particles = n_particles, **data)
+                    weight = self.SSM.observation_model.score(state = state, observation = observation, **data)
+                    return state, weight
+        else:
+            if self.REINFORCE:
+                def prior(n_particles, observation, **data):
+                    state = self.initial_proposal_model.sample(batch_size = observation.size(0), n_particles = n_particles, **data)
+                    weight = (self.SSM.observation_model.score(state = state, observation = observation, **data)
+                              - self.SSM.initial_proposal_model.log_density(state = state, observation = observation, **data)
+                              + self.SSM.prior_model.log_density(state = state, **data))
+                    return state, weight
+            else:
+                def prior(n_particles, observation, **data):
+                    state = self.initial_proposal_model.sample(batch_size = observation.size(0), n_particles = n_particles, **data).detach()
+                    weight = (self.SSM.observation_model.score(state = state, observation = observation, **data)
+                              - self.SSM.initial_proposal_model.log_density(state = state, observation = observation, **data).detach()
+                              + self.SSM.prior_model.log_density(state = state, **data))
+                    return state, weight
+
+        def initial_sampler(n_particles: int, **data):
+            state, weight = prior(n_particles=n_particles, **data)
+            weight, likelihood = normalise(weight)
+            return state, weight, likelihood
+
+        detach_if_reinforce = lambda x: x
+        if self.REINFORCE:
+            detach_if_reinforce = lambda x: x.detach()
+
+        if self.SSM.proposal_model is None:
+            def prop(prev_state, prev_weight, observation, **data):
+                resampled_state, resampled_weight = self.resampler(prev_state, prev_weight, **data)
+                state = self.SSM.dynamic_model.sample(prev_state=resampled_state, **data)
+                used_weight = self.resampler.cache['used_weight']
+                expanded_prev_state = prev_state.unsqueeze(1).expand(-1, state.size(1), -1, -1).flatten(1, 2)
+                expanded_state = state.unsqueeze(2).expand(-1, -1, state.size(1), -1).flatten(1, 2)
+                dynamic_log_density = self.SSM.dynamic_model.log_density(state=expanded_state, prev_state=expanded_prev_state, **data).reshape(state.size(0), state.size(1), state.size(1))
+                weight = (torch.logsumexp(prev_weight.unsqueeze(1) + dynamic_log_density, dim=-1)
+                          - detach_if_reinforce(torch.logsumexp(used_weight.unsqueeze(1) + dynamic_log_density, dim=-1))
+                          + self.SSM.observation_model.score(state=state, observation=observation, **data)) + resampled_weight
+                return state, weight, resampled_weight, dynamic_log_density, dynamic_log_density
+        else:
+            def prop(prev_state, prev_weight, observation, **data):
+                resampled_state, resampled_weight = self.resampler(prev_state, prev_weight, **data)
+                state = self.SSM.proposal_model.sample(prev_state=resampled_state, **data)
+                used_weight = self.resampler.cache['used_weight']
+                expanded_prev_state = prev_state.unsqueeze(1).expand(-1, state.size(1), -1, -1).flatten(1, 2)
+                expanded_state = state.unsqueeze(2).expand(-1, -1, state.size(1), -1).flatten(1, 2)
+                dynamic_log_density = self.SSM.dynamic_model.log_density(state=expanded_state, prev_state=expanded_prev_state, **data).reshape(state.size(0), state.size(1), state.size(1))
+                proposal_log_density = self.SSM.proposal_model.log_density(state=expanded_state, prev_state=expanded_prev_state, **data).reshape(state.size(0), state.size(1), state.size(1))
+                weight = (torch.logsumexp(prev_weight.unsqueeze(1) + dynamic_log_density, dim=-1)
+                          - torch.logsumexp(used_weight.unsqueeze(1) + proposal_log_density, dim=-1)
+                          + self.SSM.observation_model.score(state=state, observation=observation, **data)) + resampled_weight
+                return state, weight, resampled_weight, dynamic_log_density, proposal_log_density
+
+        if isinstance(self.resampler, ConditionalResampler):
+            def mpf_sampler(prev_state, prev_weight, observation, **data):
+                state, weight, resampled_weight, dynamic_log_density, proposal_log_density = prop(prev_state, prev_weight, observation, **data)
+                weight = torch.where(self.resampler.cache['mask'], weight, resampled_weight + torch.diagonal(dynamic_log_density, dim1=1, dim2=2) - torch.diagonal(proposal_log_density, dim1=1, dim2=2))
+                try:
+                    weight, likelihood = normalise(weight)
+                except ValueError:
+                    raise DivergenceError('Found batch where all weights are small.')
+
+                return state, weight, torch.where(self.resampler.cache['mask'], likelihood, likelihood - normalise(resampled_weight)[1])
+        else:
+            def mpf_sampler(prev_state, prev_weight, observation, **data):
+                state, weight, _, _, _ = prop(prev_state, prev_weight, observation, **data)
+                try:
+                    weight, likelihood = normalise(weight)
+                except ValueError:
+                    raise DivergenceError('Found batch where all weights are small.')
+                return state, weight, likelihood
+
+        super()._register_functions(initial_sampler, mpf_sampler)
+
+
 
 class DPF(ParticleFilter):
     """
@@ -210,7 +381,7 @@ class DPF(ParticleFilter):
     'Differentiable Particle Filters: End-to-End Learning with Algorithmic Priors' 2018.
     """
 
-    def __init__(self, SSM: FilteringModel = None,  resampling_generator: torch.Generator = torch.default_generator, *, initial_proposal: ImportanceSampler = None, proposal: ImportanceKernel = None,) -> None:
+    def __init__(self, SSM: FilteringModel = None,  resampling_generator: torch.Generator = torch.default_generator, multinomial:bool = False) -> None:
         """
         Basic 'differentiable' particle filter, as described in R. Jonschkowski, D. Rastogi, O. Brock
         'Differentiable Particle Filters: End-to-End Learning with Algorithmic Priors' 2018.
@@ -228,7 +399,110 @@ class DPF(ParticleFilter):
         resampling_generator:
             The generator to track the resampling rng.
         """
-        super().__init__(systematic(resampling_generator), SSM, initial_proposal=initial_proposal, proposal=proposal)
+        if multinomial:
+            super().__init__(MultinomialResampler(resampling_generator), SSM, False)
+        else:
+            super().__init__(SystematicResampler(resampling_generator), SSM, False)
+
+        temp = copy(self.proposal)
+        self.proposal = lambda prev_state, prev_weight, **data: temp(prev_state.detach(), prev_weight.detach(), **data)
+
+class MarginalDPF(MarginalParticleFilter):
+    """
+        Basic 'differentiable' particle filter, as described in R. Jonschkowski, D. Rastogi and O. Brock
+        'Differentiable Particle Filters: End-to-End Learning with Algorithmic Priors' 2018.
+        """
+
+    def __init__(self, SSM: FilteringModel = None, resampling_generator: torch.Generator = torch.default_generator, multinomial: bool = False) -> None:
+        """
+        Basic 'differentiable' particle filter, as described in R. Jonschkowski, D. Rastogi, O. Brock
+        'Differentiable Particle Filters: End-to-End Learning with Algorithmic Priors' 2018.
+
+        Parameters
+        ----------
+        SSM: FilteringModel
+            A FilteringModel that represents the SSM (and optionally a proposal model). See the documentation of FilteringModel for more complete information.
+            If this parameter is not None then the values of initial_proposal and proposal are ignored.
+        initial_proposal: ImportanceSampler
+            Importance sampler for the initial distribution, takes the number of particles and the data at time 0,
+            and returns the importance sampled state and weights
+        proposal: ImportanceKernel
+            Importance sampler for the proposal kernel, takes the state, weights and data and returns the new states and weights.
+        resampling_generator:
+            The generator to track the resampling rng.
+        """
+        if multinomial:
+            super().__init__(MultinomialResampler(resampling_generator), SSM, False)
+        else:
+            super().__init__(SystematicResampler(resampling_generator), SSM, False)
+
+        temp = copy(self.proposal)
+        self.proposal = lambda prev_state, prev_weight, **data: temp(prev_state.detach(), prev_weight.detach(), **data)
+
+class StraightThroughDPF(ParticleFilter):
+    """
+        Similar to the DPF but the gradient of the state is passed through resampling without modification. (T. Le et al. 'Auto-encoding sequential monte carlo' 2018,
+        C. Maddison et al. ' Filtering variational objectives' 2018, and C. Naesseth et al. 'Variational sequential monte carlo' 2018)
+    """
+
+    def __init__(self, SSM: FilteringModel = None,  resampling_generator: torch.Generator = torch.default_generator, multinomial:bool = False) -> None:
+        """
+        Similar to the DPF but the gradient of the state is passed through resampling without modification. (T. Le et al. 'Auto-encoding sequential monte carlo' 2018,
+        C. Maddison et al. ' Filtering variational objectives' 2018, and C. Naesseth et al. 'Variational sequential monte carlo' 2018)
+
+
+
+        Parameters
+        ----------
+        SSM: FilteringModel
+            A FilteringModel that represents the SSM (and optionally a proposal model). See the documentation of FilteringModel for more complete information.
+            If this parameter is not None then the values of initial_proposal and proposal are ignored.
+        initial_proposal: ImportanceSampler
+            Importance sampler for the initial distribution, takes the number of particles and the data at time 0,
+            and returns the importance sampled state and weights
+        proposal: ImportanceKernel
+            Importance sampler for the proposal kernel, takes the state, weights and data and returns the new states and weights.
+        resampling_generator:
+            The generator to track the resampling rng.
+        """
+        if multinomial:
+            super().__init__(MultinomialResampler(resampling_generator), SSM, False)
+        else:
+            super().__init__(SystematicResampler(resampling_generator), SSM, False)
+
+
+
+class MarginalStraightThroughDPF(MarginalParticleFilter):
+    """
+        Similar to the DPF but the gradient of the state is passed through resampling without modification. (T. Le et al. 'Auto-encoding sequential monte carlo' 2018,
+        C. Maddison et al. ' Filtering variational objectives' 2018, and C. Naesseth et al. 'Variational sequential monte carlo' 2018)
+    """
+
+    def __init__(self, SSM: FilteringModel = None,  resampling_generator: torch.Generator = torch.default_generator, multinomial:bool = False) -> None:
+        """
+        Similar to the DPF but the gradient of the state is passed through resampling without modification. (T. Le et al. 'Auto-encoding sequential monte carlo' 2018,
+        C. Maddison et al. ' Filtering variational objectives' 2018, and C. Naesseth et al. 'Variational sequential monte carlo' 2018)
+
+
+
+        Parameters
+        ----------
+        SSM: FilteringModel
+            A FilteringModel that represents the SSM (and optionally a proposal model). See the documentation of FilteringModel for more complete information.
+            If this parameter is not None then the values of initial_proposal and proposal are ignored.
+        initial_proposal: ImportanceSampler
+            Importance sampler for the initial distribution, takes the number of particles and the data at time 0,
+            and returns the importance sampled state and weights
+        proposal: ImportanceKernel
+            Importance sampler for the proposal kernel, takes the state, weights and data and returns the new states and weights.
+        resampling_generator:
+            The generator to track the resampling rng.
+        """
+        if multinomial:
+            super().__init__(MultinomialResampler(resampling_generator), SSM, False)
+        else:
+            super().__init__(SystematicResampler(resampling_generator), SSM, False)
+
 
 class SoftDPF(ParticleFilter):
     """
@@ -236,7 +510,10 @@ class SoftDPF(ParticleFilter):
     'Particle Filter Networks with Application to Visual Localization' 2018).
     """
 
-    def __init__(self, SSM: FilteringModel = None,  softness: float = 0.7, resampling_generator: torch.Generator = torch.default_generator, *, initial_proposal: ImportanceSampler = None, proposal: ImportanceKernel = None) -> None:
+    def __init__(self, SSM: FilteringModel = None,
+                 softness: float = 0.7,
+                 resampling_generator: torch.Generator = torch.default_generator,
+                 multinomial: bool = False) -> None:
         """
         Differentiable particle filter with soft-resampling.
 
@@ -255,7 +532,43 @@ class SoftDPF(ParticleFilter):
         resampling_generator:
             The generator to track the resampling rng.
         """
-        super().__init__(soft(softness, resampling_generator), SSM, initial_proposal=initial_proposal, proposal= proposal)
+        if multinomial:
+            super().__init__(SoftResampler(softness, MultinomialResampler(resampling_generator), resampling_generator.device), SSM)
+            return
+        super().__init__(SoftResampler(softness, SystematicResampler(resampling_generator), resampling_generator.device), SSM)
+
+class MarginalSoftDPF(MarginalParticleFilter):
+    """
+        Differentiable particle filter with soft-resampling (P. Karkus, D. Hsu and W. S. Lee
+        'Particle Filter Networks with Application to Visual Localization' 2018).
+        """
+
+    def __init__(self, SSM: FilteringModel = None,
+                 softness: float = 0.7,
+                 resampling_generator: torch.Generator = torch.default_generator,
+                 multinomial: bool = False) -> None:
+        """
+        Differentiable particle filter with soft-resampling.
+
+        Parameters
+        ----------
+        SSM: FilteringModel
+            A FilteringModel that represents the SSM (and optionally a proposal model). See the documentation of FilteringModel for more complete information.
+            If this parameter is not None then the values of initial_proposal and proposal are ignored.
+        initial_proposal: ImportanceSampler
+            Importance sampler for the initial distribution, takes the number of particles and the data at time 0,
+            and returns the importance sampled state and weights
+        proposal: ImportanceKernel
+            Importance sampler for the proposal kernel, takes the state, weights and data and returns the new states and weights.
+        softness: float
+            The trade-off parameter between a uniform and the usual resampling distribution.
+        resampling_generator:
+            The generator to track the resampling rng.
+        """
+        if multinomial:
+            super().__init__(SoftResampler(softness, MultinomialResampler(resampling_generator), resampling_generator.device), SSM)
+            return
+        super().__init__(SoftResampler(softness, SystematicResampler(resampling_generator), resampling_generator.device), SSM)
 
 class OptimalTransportDPF(ParticleFilter):
     """
@@ -268,10 +581,6 @@ class OptimalTransportDPF(ParticleFilter):
                  min_update_size: float = 0.01,
                  max_iterations: int = 100,
                  transport_gradient_clip: float = 1.,
-                 *,
-                 initial_proposal: ImportanceSampler = None,
-                 proposal: ImportanceKernel = None,
-
                  ) -> None:
         """
         Differentiable particle filter with optimal transport resampling.
@@ -298,14 +607,17 @@ class OptimalTransportDPF(ParticleFilter):
         transport_gradient_clip: float
             The maximum per-element gradient of the transport matrix that should be passed. Higher valued gradients will be clipped to this value.
         """
-        super().__init__(optimal_transport(regularisation, step_size, min_update_size, max_iterations, transport_gradient_clip), SSM, initial_proposal=initial_proposal, proposal=proposal)
+        super().__init__(OptimalTransportResampler(regularisation, step_size, min_update_size, max_iterations, transport_gradient_clip), SSM)
 
 class StopGradientDPF(ParticleFilter):
     """
     Differentiable particle filter with stop-gradient resampling (A. Scibor and F. Wood
     'Differentiable Particle Filtering without Modifying the Forward Pass' 2021).
     """
-    def __init__(self, SSM: FilteringModel = None, initial_proposal: ImportanceSampler = None, proposal: ImportanceKernel = None, resampling_generator: torch.Generator = torch.default_generator) -> None:
+    def __init__(self, SSM: FilteringModel = None,
+                 resampling_generator: torch.Generator = torch.default_generator,
+                 multinomial = False,
+                 use_REINFORCE_for_proposal:bool = False) -> None:
         """
         Differentiable particle filter with stop-gradient resampling.
 
@@ -322,30 +634,17 @@ class StopGradientDPF(ParticleFilter):
         resampling_generator:
             The generator to track the resampling rng.
         """
-        super().__init__(stop_gradient(resampling_generator), SSM, initial_proposal=initial_proposal, proposal=proposal)
+        if multinomial:
+            super().__init__(StopGradientResampler(MultinomialResampler(resampling_generator)), SSM, use_REINFORCE_for_proposal)
+            return
+        super().__init__(StopGradientResampler(SystematicResampler(resampling_generator)), SSM, use_REINFORCE_for_proposal)
 
-class StabilisedStopGradientDPF(SIS):
-
-
-    def __init__(self,
-                 SSM: FilteringModel = None,
-                 initial_proposal: ImportanceSampler = None,
-                 proposal: Callable[[Tensor, Tensor, int], Tensor] = None,
-                 log_proposal_density: Callable[[Tensor, Tensor, Tensor, int], Tensor] = None,
-                 log_posterior_density: Union[Callable[[Tensor, Tensor, Tensor, int] ,Tensor], None] = None,
-                 resampling_generator: torch.Generator = torch.default_generator) -> None:
+class MarginalStopGradientDPF(MarginalParticleFilter):
+    def __init__(self, SSM: FilteringModel = None,
+                 resampling_generator: torch.Generator = torch.default_generator,
+                 multinomial = False) -> None:
         """
-        The variance reduced version of the Stop Gradient DPF (A. Scibor and F. Wood
-        'Differentiable Particle Filtering without Modifying the Forward Pass' 2021).
-
-        This is less general than the Stop Gradient DPF and requires a specific form for the proposal.
-
-        Unlike most the Stop Gradient resampler the computational cost is quadratic in the number of particles.
-
-        Notes
-        -----
-        This particle filter directly targets the per-time-step marginal posterior rather than the posterior of complete trajectories.
-        In the bootstrap case the two are equivalent in their forward pass. But in general this filter should not be used as part of a procedure to sample trajectories.
+        Differentiable particle filter with stop-gradient resampling.
 
         Parameters
         ----------
@@ -355,90 +654,19 @@ class StabilisedStopGradientDPF(SIS):
         initial_proposal: ImportanceSampler
             Importance sampler for the initial distribution, takes the number of particles and the data at time 0,
             and returns the importance sampled state and weights
-        proposal: ImportanceKernels
+        proposal: ImportanceKernel
             Importance sampler for the proposal kernel, takes the state, weights and data and returns the new states and weights.
-        log_proposal_density: Callable[[Tensor, Tensor, Tensor, Tensor], Tensor]
-            Returns the density of the proposal model given the new state, old state, data, and discrete time.
-        log_posterior_density: Callable[[Tensor, Tensor, Tensor, Tensor], Tensor]
-            Returns the (unnormalised) density of the posterior model given the new state, old state, data, and discrete time.
         resampling_generator:
             The generator to track the resampling rng.
         """
-        super().__init__()
-        self.cached_density = None
-
-        if SSM is not None:
-            if not hasattr(SSM.dynamic_model, 'log_density'):
-                raise AttributeError("The dynamic model must implement a 'log_density' method for stabalised stop gradient resampling.")
-            self.SSM = SSM
-            initial_proposal = SSM.get_prior_IS()
-            if SSM.proposal_model is None:
-                proposal = SSM.dynamic_model.sample
-                #In the bootstrap formulation the proposal and dynamic models are the same. Save computation by caching the log_density
-                log_proposal_density = lambda **data: self.cached_density
-                def posterior_and_cache_density(prev_state, state, **data):
-                    self.cached_density = SSM.dynamic_model.log_density(state=state, prev_state=prev_state, **data).detach()
-                    return self.cached_density + SSM.observation_model.score(state, **data)
-                log_posterior_density = posterior_and_cache_density
-            else:
-                proposal = SSM.proposal_model.sample
-                log_proposal_density = SSM.log_proposal_density
-                log_posterior_density = lambda new_state, old_state, data, t : SSM.dynamic_model.log_density(new_state, old_state, data, t) + SSM.observation_model.score(new_state, data, t)
-
-
-        def _systematic(state: Tensor, weights: Tensor) -> Tuple[Tensor, Tensor, Tensor]:
-            with torch.no_grad():
-                offset = torch.rand((weights.size(0),), device=state.device, generator=resampling_generator)
-                cum_probs = torch.cumsum(torch.exp(weights), dim=1)
-                # No index can be above 1. and the last index must be exactly 1.
-                # Fix this in case of numerical errors
-                cum_probs = torch.where(cum_probs > 1., 1., cum_probs)
-                cum_probs[:, -1] = 1.
-                resampling_points = torch.arange(weights.size(1), device=state.device) + offset.unsqueeze(1)
-                sampled_indices = torch.searchsorted(cum_probs * weights.size(1), resampling_points)
-            return batched_select(state, sampled_indices), torch.zeros_like(weights), sampled_indices
-
-        def resampling(state: Tensor, weight: Tensor):
-            state, no_grad_weights, sampled_indices = _systematic(state, weight)
-            resampled_weights = batched_select(weight, sampled_indices)
-            return state, resampled_weights - resampled_weights.detach()
-
-        class PF_initial_sampler(Module):
-            def __init__(self):
-                super().__init__()
-                self.initial_proposal = initial_proposal
-
-            def forward(self, n_particles: int, **data) -> Tuple[Tensor, Tensor, Tensor]:
-                state, weight = self.initial_proposal(n_particles, **data)
-                weight, likelihood = normalise(weight)
-                return state, weight, likelihood
-
-
-        class StabPFSampler(Module):
-            def __init__(self):
-                super().__init__()
-                self.log_proposal_density = log_proposal_density
-                self.log_posterior_density = log_posterior_density
-                self.proposal = proposal
-
-
-            def forward(self, prev_state, prev_weight, **data):
-                resampled_x, resampled_w = resampling(prev_state, prev_weight)
-                state = self.proposal(prev_state = resampled_x, **data)
-                expanded_state = state.unsqueeze(2).expand(-1, -1, resampled_x.size(1), -1).flatten(1,2)
-                resampled_x = resampled_x.unsqueeze(1).expand(-1, state.size(1), -1, -1).flatten(1,2)
-                weight_numerator = self.log_posterior_density(state=expanded_state, prev_state=resampled_x, **data).reshape(state.size(0), state.size(1), state.size(1))
-                weight_denominator = self.log_proposal_density(state=expanded_state, prev_state=resampled_x, **data).reshape(state.size(0), state.size(1), state.size(1))
-                resampled_w = resampled_w.unsqueeze(-1)
-                weight = torch.logsumexp(resampled_w + weight_numerator, dim =2)  - torch.logsumexp(resampled_w.detach() + weight_denominator, dim = 2)
-                weight, likelihood = normalise(weight)
-                return state, weight, likelihood
-
-        self._register_functions(initial_proposal=PF_initial_sampler(), proposal= StabPFSampler())
+        if multinomial:
+            super().__init__(MultinomialResampler(resampling_generator), SSM, True)
+            return
+        super().__init__(SystematicResampler(resampling_generator), SSM, True)
 
 class KernelDPF(ParticleFilter):
 
-    def __init__(self, SSM: FilteringModel = None, kernel: KernelMixture = None, *, initial_proposal: ImportanceSampler = None, proposal: ImportanceKernel = None) -> None:
+    def __init__(self, SSM: FilteringModel = None, kernel: KernelMixture = None, use_REINFORCE_for_proposal:bool = False) -> None:
         """
             Differentiable particle filter with mixture kernel resampling (Younis and Sudderth 'Differentiable and Stable Long-Range Tracking of Multiple Posterior Modes' 2024).
 
@@ -465,4 +693,73 @@ class KernelDPF(ParticleFilter):
         if kernel is None:
             raise ValueError('Must specify a kernel mixture')
 
-        super().__init__(kernel_resampling(kernel), SSM, initial_proposal=initial_proposal, proposal=proposal)
+        super().__init__(KernelResampler(kernel), SSM, use_REINFORCE_for_proposal)
+
+
+class VariationalDPF(ParticleFilter):
+
+    def __init__(self, SSM: FilteringModel = None) -> None:
+        """
+            Differentiable particle filter with mixture kernel resampling (Younis and Sudderth 'Differentiable and Stable Long-Range Tracking of Multiple Posterior Modes' 2024).
+
+
+
+            Parameters
+            ----------
+            SSM: FilteringModel
+                A FilteringModel that represents the SSM (and optionally a proposal model). See the documentation of FilteringModel for more complete information.
+                If this parameter is not None then the values of initial_proposal and proposal are ignored.
+            initial_proposal: ImportanceSampler
+                Importance sampler for the initial distribution, takes the number of particles and the data at time 0,
+                and returns the importance sampled state and weights
+            proposal: ImportanceKernel
+                Importance sampler for the proposal kernel, takes the state, weights and data and returns the new states and weights.
+            kernel: KernelMixture
+                The kernel mixture to convolve over the particles to form the KDE sampling distribution.
+
+            Returns
+            -------
+            kernel_resampler: Callable[[Tensor, Tensor], Tuple[Tensor, Tensor, Tensor]]:
+                A Module whose forward method implements kernel resampling.
+        """
+
+        super().__init__(VariationalResampler(), SSM)
+
+
+class SVGDKernelDPF(ParticleFilter):
+
+    def __init__(self, SSM: FilteringModel = None, kernel: KernelMixture = None, lr:float=1e-2, alpha:float=0.9, iterations:int=100, *, initial_proposal: ImportanceSampler = None, proposal: ImportanceKernel = None) -> None:
+        """
+            Differentiable particle filter with mixture kernel resampling (Younis and Sudderth 'Differentiable and Stable Long-Range Tracking of Multiple Posterior Modes' 2024).
+
+
+
+            Parameters
+            ----------
+            SSM: FilteringModel
+                A FilteringModel that represents the SSM (and optionally a proposal model). See the documentation of FilteringModel for more complete information.
+                If this parameter is not None then the values of initial_proposal and proposal are ignored.
+            initial_proposal: ImportanceSampler
+                Importance sampler for the initial distribution, takes the number of particles and the data at time 0,
+                and returns the importance sampled state and weights
+            proposal: ImportanceKernel
+                Importance sampler for the proposal kernel, takes the state, weights and data and returns the new states and weights.
+            kernel: KernelMixture
+                The kernel mixture to convolve over the particles to form the KDE sampling distribution.
+
+            Returns
+            -------
+            kernel_resampler: Callable[[Tensor, Tensor], Tuple[Tensor, Tensor, Tensor]]:
+                A Module whose forward method implements kernel resampling.
+        """
+        if kernel is None:
+            raise ValueError('Must specify a kernel mixture')
+
+        super().__init__(SVGD_kernel_resampling(kernel, lr, alpha, iterations), SSM)
+
+class AuxiliaryDPF(ParticleFilter):
+    def __init__(self, SSM: FilteringModel, n_repeats, resampling_generator, multinomial:bool =False) -> None:
+        if multinomial:
+            super().__init__(AuxiliaryResampler(SSM, n_repeats, MultinomialResampler(resampling_generator)), SSM)
+            return
+        super().__init__(AuxiliaryResampler(SSM, n_repeats, SystematicResampler(resampling_generator)), SSM)

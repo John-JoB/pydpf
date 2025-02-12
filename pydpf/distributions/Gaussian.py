@@ -9,7 +9,7 @@ from warnings import warn
 class MultivariateGaussian(Distribution):
     conditional = False
 
-    half_log_2pi = 1/2 * torch.log(torch.tensor(2*torch.pi))
+    half_log_2pi = (1/2) * torch.log(torch.tensor(2*torch.pi))
 
     def __init__(self, mean: Tensor, cholesky_covariance: Tensor, diagonal_cov:bool = False, gradient_estimator: str = 'reparameterisation', generator: Union[None, torch.Generator] = None) -> None:
         """

@@ -4,6 +4,7 @@ from .Gaussian import MultivariateGaussian
 from typing import Iterable, Union, Tuple, List
 import torch
 from ..utils import doc_function, batched_select
+from ..resampling import MultinomialResampler
 
 
 class CompoundDistribution(Distribution):
@@ -134,6 +135,7 @@ class KernelMixture(Distribution):
 
 
         super().__init__(gradient_estimator, generator)
+        self.resampler = MultinomialResampler(generator=generator)
         if isinstance(kernel, Distribution):
             self.kernel = kernel
         elif len(kernel) == 1:
@@ -141,7 +143,7 @@ class KernelMixture(Distribution):
         else:
             subkernels = [self.make_kernel(subkernel[0], subkernel[1]) for subkernel in kernel]
             self.kernel = CompoundDistribution(subkernels, gradient_estimator='none', generator=generator)
-        self.reparameterisable = False
+        self.reparameterisable = True
         self.dim = self.kernel.dim
         if type(self.kernel).conditional:
             raise ValueError(f'The kernel distribution cannot be conditional, detected {type(self.kernel)} which is.')
@@ -183,7 +185,7 @@ class KernelMixture(Distribution):
         #Multinomial resampling is sampling from a KDE with a dirac kernel.
         self._check_conditions(loc, weight)
         try:
-            sampled_locs = sample_only_multinomial(loc, weight, generator=self.generator)
+            sampled_locs, _ = self.resampler(loc, weight, generator=self.generator)
         except Exception as e:
             raise RuntimeError(f'Failed to sample kernels with error: \n {e} \n This is likely due to a mismatch in batch dimensions.')
         batch_size = self.get_batch_size(sampled_locs.size(), 2)

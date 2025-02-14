@@ -87,6 +87,7 @@ def train(dpf,
             opt.zero_grad()
             loss = dpf(n_particles[0], observation.size(0) - 1, loss_function, observation=observation, ground_truth=state, gradient_regulariser = gradient_regulariser)
             loss = loss.mean()
+            #print(loss.item())
             loss.backward()
             train_loss.append(loss.item()*state.size(1))
             opt.step()

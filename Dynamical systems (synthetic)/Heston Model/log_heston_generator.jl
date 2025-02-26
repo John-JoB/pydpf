@@ -42,14 +42,35 @@ summ = nothing
 GC.gc()
 # @assert feller
 
-function HestonProblem(μ, κ, θ, σ, ρ, u0, tspan; seed=UInt64(0), kwargs...)
+function LogHestonProblem(μ, κ, θ, σ, ρ, u0, tspan; seed=UInt64(0), kwargs...)
     f = function (du, u, p, t)
-        du[1] = μ * u[1]
-        du[2] = κ * (θ - max(0.0, u[2]))
+        # # St = exp(u[1])
+        # vt = exp(u[2])
+
+        # dlog_St_dt = (μ - vt/2)
+        # dlog_vt_dt = κ  * (θ / vt - 1) - (σ^2 / (2 * vt))
+        # du[1] = dlog_St_dt
+        # du[2] = dlog_vt_dt
+        # # du[1] = μ * u[1]
+        # # du[2] = κ * (θ - max(0.0, u[2]))
+        du[1] = μ - exp(u[2]) / 2
+        du[2] = κ * (θ / exp(u[2]) - 1) - (σ^2 / (2 * exp(u[2])))
+        nothing
     end
     g = function (du, u, p, t)
-        du[1] = sqrt(max(0.0, u[2])) * u[1]
-        du[2] = σ * sqrt(max(0.0, u[2]))
+        # du[1] = sqrt(max(0.0, u[2])) * u[1]
+        # du[2] = σ * sqrt(max(0.0, u[2]))
+        # St = exp(u[1])
+        # vt = exp(u[2])
+        # sqrt_vt = exp(0.5 * u[2])
+
+        # dlog_St_dWt = sqrt_vt
+        # dlog_vt_dWt = σ / sqrt_vt
+        # du[1] = dlog_St_dWt
+        # du[2] = dlog_vt_dWt
+        du[1] = exp(0.5 * u[2])
+        du[2] = σ / exp(0.5 * u[2])
+        nothing
     end
     Γ = [1 ρ; ρ 1] # Correlation matrix of wiener processes
     noise_rate_prototype = nothing
@@ -64,31 +85,31 @@ function HestonProblem(μ, κ, θ, σ, ρ, u0, tspan; seed=UInt64(0), kwargs...)
     SDEProblem(sde_f, u0, tspan, noise=noise, seed=seed, kwargs...)
 end
 
-heston_model = HestonProblem(μ, κ, θ, σ, ρ, [50.0, v0], tspan, seed=rand(UInt64))
+heston_model = LogHestonProblem(μ, κ, θ, σ, ρ, log.([50.0, v0]), tspan, seed=rand(UInt64))
 
-function reseed_heston(prob, i, repeat)
-    HestonProblem(μ, κ, θ, σ, ρ, [50.0, θ], tspan, seed=rand(UInt64))
+function reseed_log_heston(prob, i, repeat)
+    LogHestonProblem(μ, κ, θ, σ, ρ, log.([50.0, v0]), tspan, seed=rand(UInt64))
 end
 
 check_domain(u, p, t) = u[2] < 0.0
 
-heston_model = HestonProblem(μ, κ, θ, σ, ρ, [50.0, v0], tspan, seed=rand(UInt64))
+log_heston_model = LogHestonProblem(μ, κ, θ, σ, ρ, log.([50.0, v0]), tspan, seed=rand(UInt64))
 
 
-sol = solve(heston_model, SRIW1(), dt=1e-3, adaptive=false, saveat=tspan[1]:0.1:tspan[2], isoutofdomain=check_domain)
-ensemble_prob = EnsembleProblem(heston_model, prob_func=reseed_heston, safetycopy=false)
-sim = solve(ensemble_prob, SRIW1(), dt=1e-3, adaptive=false, EnsembleThreads(), trajectories=100, saveat=tspan[1]:1.0:tspan[2])
+sol = solve(log_heston_model, SRIW1(), dt=1e-3, adaptive=false, saveat=tspan[1]:0.1:tspan[2], isoutofdomain=check_domain)
+ensemble_prob = EnsembleProblem(log_heston_model, prob_func=reseed_log_heston, safetycopy=false)
+sim = solve(ensemble_prob, SRIW1(), dt=1e-3, adaptive=false, EnsembleThreads(), trajectories=100, saveat=tspan[1]:1.0:tspan[2], save_everystep = false)
 
-println("Done simulating! (base problem)")
+println("Done simulating! (log problem)")
 
-p1 = plot(sol, lw=1.5, size=(666, 200), dpi=300, label="", idxs=(0, 1), ylabel="Price")
-p2 = plot(sol, lw=1.5, size=(666, 200), dpi=300, label="", idxs=((t, v) -> (t, sqrt(v)), 0, 2), ylabel="Volatility")
+p1 = plot(sol, lw=1.5, size=(666, 200), dpi=300, label="", idxs=((t, v) -> (t, exp(v)), 0, 1), ylabel="Price")
+p2 = plot(sol, lw=1.5, size=(666, 200), dpi=300, label="", idxs=((t, v) -> (t, exp(v)), 0, 2), ylabel="Sq. Volatility")
 plot(p1, p2, layout=(2, 1), size=(600, 600))
 
 summ = EnsembleSummary(sim);
 plot(summ)
-p1_ens = plot(sim, lw=1.5, size=(666, 200), dpi=300, label="", idxs=(0, 1), ylabel="Price")
-p2_ens = plot(sim, lw=1.5, size=(666, 200), dpi=300, label="", idxs=((t, v) -> (t, sqrt(v)), 0, 2), ylabel="Volatility")
+p1_ens = plot(sim, lw=1.5, size=(666, 200), dpi=300, label="", idxs=((t, v) -> (t, exp(v)), 0, 1), ylabel="Price", ci_type=:SEM, error_style=:ribbon)
+p2_ens = plot(sim, lw=1.5, size=(666, 200), dpi=300, label="", idxs=((t, v) -> (t, exp(v/2)), 0, 2), ylabel="Volatility")
 plot(p1_ens, p2_ens, layout=(2, 1), size=(600, 600))
 
 
@@ -107,8 +128,9 @@ t_steps = range(0, 252, step=1.0)
 
 observations, states = extract_state_and_observations(sim, t_steps)
 
-println(mean([o[end] for o in observations]))
-println(std([o[end] for o in observations]))
+println(mean([exp(o[end]) for o in observations]))
+println(std([exp(o[end]) for o in observations]))
+
 
 # function expand_vector_col!(df, col)
 #     col_width = length(df[begin, col])
@@ -131,7 +153,7 @@ println(std([o[end] for o in observations]))
 # end
 
 # params = Dict("r" => μ, "k" => κ, "theta" => θ, "sigma" => σ, "rho" => ρ)
-# save_path = "./Heston Model/data/synthetic_run/";
+# save_path = "./Heston Model/data/synthetic_log_run/";
 
 # open(save_path * "params.json", "w") do f
 #     JSON.print(f, params, 4)

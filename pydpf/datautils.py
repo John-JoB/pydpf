@@ -16,13 +16,46 @@ class StateSpaceDataset(Dataset):
     '''
         Dataset class for state-observation data.
         Latent state of the system stored in the state Tensor.
-        All other data including non-discrete time (if applicable) should be treated as observations.
 
         Dimensions are Discrete Time - Batch - Data
+
+        When used as called from a dataloader you must use the custom collate function
+        Data will always be returned in the order 'state' - 'observation' - 'time' - 'control' - 'metadata'
 
         At the moment I only give functionality to load entire data set into RAM/VRAM.
         Might give the option to load lazily in the future, if required.
     '''
+
+    @property
+    def state(self):
+        if 'state' in self.data_order:
+            return self.data['tensor'][:, :, self.data['indices']['state']]
+        raise AttributeError('No state data available')
+
+    @property
+    def observation(self):
+        if 'observation' in self.data_order:
+            return self.data['tensor'][:, :, self.data['indices']['observation']]
+        raise AttributeError('No state data available')
+
+    @property
+    def time(self):
+        if 'time' in self.data_order:
+            return self.data['tensor'][:, :, self.data['indices']['time']]
+        raise AttributeError('No time data available')
+
+    @property
+    def control(self):
+        if 'control' in self.data_order:
+            return self.data['tensor'][:, :, self.data['indices']['control']]
+        raise AttributeError('No control data available')
+
+    @property
+    def metadata(self):
+        if self.metadata:
+            return self.data['metadata']
+        raise AttributeError('No metadata data available')
+
     def __init__(self,
                  data_path: Union[Path,str],
                  *,
@@ -37,16 +70,12 @@ class StateSpaceDataset(Dataset):
         self.data = load_data_csv(data_path, series_id_column = series_id_column, state_prefix = state_prefix, observation_prefix = observation_prefix, time_column = time_column, control_prefix = control_prefix)
         self.data['tensor'] = torch.from_numpy(self.data['tensor']).to(device=self.device, dtype=torch.float32)
         self.data_order = []
-        self.observation = self.data['tensor'][:, :, self.data['indices']['observation']]
         if state_prefix is not None:
-            self.state = self.data['tensor'][:, :, self.data['indices']['state']]
             self.data_order.append('state')
         self.data_order.append('observation')
         if time_column is not None:
-            self.time = self.data['tensor'][:, :, self.data['indices']['time']].squeeze()
             self.data_order.append('time')
         if control_prefix is not None:
-            self.control = self.data['tensor'][:, :, self.data['indices']['control']]
             self.data_order.append('control')
         self.metadata_exists = False
         try:
@@ -83,10 +112,11 @@ class StateSpaceDataset(Dataset):
             batch = tuple(zip(*batch))
             collated_data = torch.stack(batch[0], dim=0).transpose(0, 1)
             collated_metadata = torch.stack(batch[1], dim=0)
-            return *(collated_data[:, :, self.data['indices'][data_category]].contiguous() for data_category in self.data_order), collated_metadata
+            return (*(collated_data[:, :, self.data['indices'][data_category]].squeeze().contiguous() if data_category == "time" else collated_data[:, :, self.data['indices'][data_category]].contiguous() for data_category in self.data_order),
+                    collated_metadata)
         else:
             collated_batch = torch.stack(batch, dim=0).transpose(0, 1)
-            return *(collated_batch[:, :, self.data['indices'][data_category]].squeeze().contiguous() for data_category in self.data_order),
+            return *(collated_batch[:, :, self.data['indices'][data_category]].squeeze().contiguous() if data_category == "time" else collated_batch[:, :, self.data['indices'][data_category]].contiguous() for data_category in self.data_order),
 
     def normalise_dims(self, normalise_state: bool, scale_dims: str = 'all', individual_timesteps: bool = True, dims: Union[Tuple[int], None] = None) -> Tuple[torch.Tensor, torch.Tensor]:
         """
@@ -170,6 +200,42 @@ class StateSpaceDataset(Dataset):
             else:
                 self.observation.data = data.transpose(0, -1)
             return means.transpose(0, -1), std.transpose(0, -1)
+
+    def apply(self, f, modified_series:str = 'observation'):
+        """
+        Apply a function across all trajectories
+
+        Returns
+        -------
+
+        """
+        with torch.no_grad():
+            true_order = ['state', 'observation', 'time', 'control', 'metadata']
+            if not modified_series in true_order:
+                raise ValueError('modified_series must be one of "state", "observation", "control", "time", or "metadata"')
+
+            partitioned_data = {data_category: self.data['tensor'][:, :, self.data['indices'][data_category]].contiguous() for data_category in self.data_order}
+            if self.metadata_exists:
+                partitioned_data['metadata'] = self.data['metadata']
+            new_series = f(**partitioned_data)
+            if modified_series in self.data_order:
+                inverse_index = [i for i in range(self.data['tensor'].size(-1)) if (i not in self.data['indices'][modified_series])]
+                new_data = self.data['tensor'][:, :, inverse_index]
+                if new_series.dim() == 2:
+                    new_series = new_series.unsqueeze(-1)
+                start_index = new_data.size(-1)
+                self.data['tensor'] = torch.cat((new_data, new_series), dim=-1)
+                self.data['indices'][modified_series] = range(start_index, self.data['tensor'].size(-1))
+                return
+            self.data_order = [series for series in true_order if (series in self.data_order or series == modified_series)]
+            start_index = self.data['tensor'].size(-1)
+            self.data['tensor'] = torch.cat((self.data['tensor'], new_series), dim=-1)
+            self.data['indices'][modified_series] = range(start_index, self.data['tensor'].size(-1))
+
+
+
+
+
 
 def _get_time_data(data: dict, t: int) -> dict:
     time_dict = {k:v[t] for k, v in data.items() if k != 'series_metadata'}

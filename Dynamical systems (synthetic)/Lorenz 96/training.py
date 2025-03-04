@@ -1,9 +1,11 @@
 import torch
+from torchviz import make_dot
 import pydpf
 from pathlib import Path
 from typing import Union, Tuple
 import numpy as np
 from copy import deepcopy
+import gc
 
 def _get_split_amounts(split, data_length):
     split_sum = sum(split)
@@ -18,6 +20,32 @@ def _get_split_amounts(split, data_length):
     if s[2] < 1:
         raise ValueError(f'Trying to assign too small a fraction to the test set')
     return s
+
+def test(pf,
+          data_path: Union[Path, str],
+          n_particles: int,
+          batch_size: int,
+          device: torch.device,
+          loss_function: pydpf.Module,
+          data_loading_generator: torch.Generator = torch.default_generator
+          ):
+    print('   ')
+    with torch.inference_mode():
+
+        data = pydpf.StateSpaceDataset(data_path, state_prefix='state', device=device, time_column='t')
+        loader = torch.utils.data.DataLoader(data, batch_size=batch_size, shuffle=False, generator=data_loading_generator, collate_fn=data.collate)
+        losses = []
+        total_size = 0
+
+        for state, observation, time in loader:
+            pf.update()
+            loss = pf(n_particles, observation.size(0) - 1, loss_function, observation=observation, ground_truth=state, gradient_regulariser = None, time=time)
+            loss = loss.mean()
+            losses.append(loss.item()*state.size(1))
+            total_size += state.size(1)
+        train_loss = np.sum(np.array(losses))/total_size
+        print(f"loss = {train_loss}")
+
 
 
 def train(dpf,
@@ -59,15 +87,26 @@ def train(dpf,
         total_size = 0
         dpf.train()
         for state, observation, time in train_loader:
+            #print(state[0])
             dpf.update()
             opt.zero_grad()
             loss = dpf(n_particles[0], observation.size(0) - 1, loss_function, observation=observation, ground_truth=state, gradient_regulariser = gradient_regulariser, time = time)
+            #print(loss)
             loss = loss.mean()
+            #print(loss)
             loss.backward()
+            #for n, p in dpf.named_parameters():
+             #   print(n)
+              #  print(p.grad)
+            #make_dot(loss).render("rnn_torchviz", format="png")
             train_loss.append(loss.item()*state.size(1))
             opt.step()
             total_size += state.size(1)
+            #for n, p in dpf.named_parameters():
+             #   print(n)
+              #  print(p.grad)
         train_loss = np.sum(np.array(train_loss)) / total_size
+
         dpf.update()
         dpf.eval()
         with torch.inference_mode():

@@ -88,7 +88,7 @@ class Distribution(Module, metaclass=ABCMeta):
             new_dim = sample
         if new_dim - parameter.dim() == 0:
             return parameter
-        return multiple_unsqueeze(parameter, new_dim - parameter.dim(), -data_dims)
+        return multiple_unsqueeze(parameter, new_dim - parameter.dim(), -data_dims-1)
 
     def __init__(self, gradient_estimator: str, generator: Union[torch.Generator, None], *args, **kwargs) -> None:
         super().__init__()

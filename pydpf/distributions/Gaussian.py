@@ -106,6 +106,11 @@ class MultivariateGaussian(Distribution):
         exponent = (-1/2) * torch.sum((residuals @ self.inv_cholesky_cov.T)**2, dim=-1)
         return prefactor + exponent
 
+    def d_log_density(self, sample:Tensor) -> Tensor:
+        self.check_sample(sample)
+        residuals = sample - self.mean
+        return -torch.einsum('...ki,...kj,...j->...i', self.inv_cholesky_cov, self.inv_cholesky_cov, residuals)
+
 class _ConstCovGaussian(Distribution):
 
     conditional = True
@@ -140,6 +145,14 @@ class _ConstCovGaussian(Distribution):
             raise RuntimeError(f'Failed to apply condition with error: \n {e}. \n This is likely to a mismatch in batch dimensions between the conditioning variables and the sample.')
         return self.dist.log_density(sample - self._unsqueeze_to_size(means, sample))
 
+    def d_log_density(self, sample:Tensor, condition_on:Tensor) -> Tensor:
+        self._check_conditions(condition_on)
+        try:
+            means = self.mean_fun(condition_on)
+        except RuntimeError as e:
+            raise RuntimeError(f'Failed to apply condition with error: \n {e}. \n This is likely to a mismatch in batch dimensions between the conditioning variables and the sample.')
+        return self.dist.d_log_density(sample - self._unsqueeze_to_size(means, sample))
+
 class _GeneralCovGaussian(Distribution):
     conditional = True
 
@@ -147,7 +160,7 @@ class _GeneralCovGaussian(Distribution):
         if condition_on.device != self.device:
             raise ValueError(f'condition_on should be on the same device as the distribution parameters, found {condition_on.device} and {self.device}.')
 
-    def _init__(self,
+    def __init__(self,
                 mean: Callable[[Tensor], Tensor],
                 cholesky_covariance: Callable[[Tensor], Tensor],
                 gradient_estimator: str = 'reparameterisation',
@@ -171,8 +184,6 @@ class _GeneralCovGaussian(Distribution):
         tril = torch.tril(cov, diagonal=-1)
         return diagonal + tril
 
-
-
     def _sample(self, condition_on: Tensor, sample_size: Union[Tuple[int, ...], None] = None) -> Tensor:
         self._check_conditions(condition_on)
         means = self.mean_fun(condition_on)
@@ -193,7 +204,7 @@ class _GeneralCovGaussian(Distribution):
         cov = self._unsqueeze_to_size(cov, sample.dim() + 1, 2)
         return sample.unsqueeze(-2) @ cov  + means
 
-    def _log_density(self, sample: Tensor, condition_on: Tensor) -> Tensor:
+    def log_density(self, sample: Tensor, condition_on: Tensor) -> Tensor:
         self._check_conditions(condition_on)
         means = self.mean_fun(condition_on)
         means = self._unsqueeze_to_size(means, sample)
@@ -217,6 +228,21 @@ class _GeneralCovGaussian(Distribution):
         return prefactor + exponent
 
 
+    def d_log_density(self, sample: Tensor, condition_on: Tensor) -> Tensor:
+        self._check_conditions(condition_on)
+        means = self.mean_fun(condition_on)
+        means = self._unsqueeze_to_size(means, sample)
+        root_cov = self.cov_fun(condition_on)
+
+        residuals = sample - means
+        if self.force_diagonal:
+            root_cov = self._unsqueeze_to_size(root_cov, sample, 1)
+            return -residuals/(root_cov**2)
+        else:
+            root_cov = self.prepare_cov(root_cov)
+            root_cov = self._unsqueeze_to_size(root_cov, sample.dim() + 1, 2)
+            inv_cov = torch.linalg.inv(root_cov)
+            return -torch.einsum('...ki,...kj,...j->...i', inv_cov, inv_cov, residuals)
 
 
 

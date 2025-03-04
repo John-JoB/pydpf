@@ -137,8 +137,7 @@ flat_rets = reduce(vcat, ret_matrix)
 println("\nShould be near zero:")
 println(var(ret_matrix) .- θ)
 println(mean(var(ret_matrix, dims=2)) .- θ)
-println((mean((ret_matrix)) - exp(μ)) / (exp(μ)-1))
-# println(mean(log.(ret_matrix) .- μ))
+println((mean(flat_rets) - exp(μ))/μ)
 # plot(kde(log.(flat_rets)), xlims = [-0.01, 0.01])
 # plot!([μ], seriestype=:vline, color="red")
 # plot!([mean(log.(ret_matrix))], seriestype=:vline, color="green")
@@ -147,32 +146,32 @@ println((mean((ret_matrix)) - exp(μ)) / (exp(μ)-1))
 # confint(bs_mean_ci, PercentileConfInt(0.95))
 
 
-# function expand_vector_col!(df, col)
-#     col_width = length(df[begin, col])
-#     target_cols = ["$(col)_$i" for i in 1:col_width]
-#     transform!(df, col => ByRow(identity) => target_cols)
-#     select!(df, Not(col))
-# end
+function expand_vector_col!(df, col)
+    col_width = length(df[begin, col])
+    target_cols = ["$(col)_$i" for i in 1:col_width]
+    transform!(df, col => ByRow(identity) => target_cols)
+    select!(df, Not(col))
+end
 
-# function save_sim_obs_to_file(path, states, obs, t_steps)
-#     mkpath(path)
-#     dataframes_vector = Vector{DataFrame}(undef, length(obs))
-#     Threads.@threads for idx in eachindex(obs)
-#         dataframes_vector[idx] = DataFrame(series_id=idx, t=collect(t_steps), state=states[idx], observation=obs[idx])
-#         expand_vector_col!(dataframes_vector[idx], "state")
-#         expand_vector_col!(dataframes_vector[idx], "observation")
-#     end
-#     dataframe_joined = vcat(dataframes_vector...)
-#     CSV.write(path * "simulated_data.csv", dataframe_joined)
-#     return dataframe_joined
-# end
+function save_sim_obs_to_file(path, states, obs, t_steps)
+    mkpath(path)
+    dataframes_vector = Vector{DataFrame}(undef, length(obs))
+    Threads.@threads for idx in eachindex(obs)
+        dataframes_vector[idx] = DataFrame(series_id=idx, t=collect(t_steps), state=states[idx], observation=obs[idx])
+        expand_vector_col!(dataframes_vector[idx], "state")
+        expand_vector_col!(dataframes_vector[idx], "observation")
+    end
+    dataframe_joined = vcat(dataframes_vector...)
+    CSV.write(path * "simulated_data.csv", dataframe_joined)
+    return dataframe_joined
+end
 
-# params = Dict("r" => μ, "k" => κ, "theta" => θ, "sigma" => σ, "rho" => ρ)
-# save_path = "./Heston Model/data/synthetic_run/";
+params = Dict("r" => μ, "k" => κ, "theta" => θ, "sigma" => σ, "rho" => ρ)
+save_path = "./Heston Model/data/synthetic_run/";
 
-# open(save_path * "params.json", "w") do f
-#     JSON.print(f, params, 4)
-# end
+open(save_path * "params.json", "w") do f
+    JSON.print(f, params, 4)
+end
 
 
-# df_out = save_sim_obs_to_file(save_path, states, observations, t_steps);
+df_out = save_sim_obs_to_file(save_path, states, observations, t_steps);

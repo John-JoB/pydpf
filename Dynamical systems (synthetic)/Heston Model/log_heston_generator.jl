@@ -168,7 +168,7 @@ function save_sim_obs_to_file(path, states, obs, t_steps)
 end
 
 params = Dict("r" => μ, "k" => κ, "theta" => θ, "sigma" => σ, "rho" => ρ)
-save_path = "./Heston Model/data/synthetic_log_run_2/";
+save_path = "./Heston Model/data/synthetic_log_run/";
 
 open(save_path * "params.json", "w") do f
     JSON.print(f, params, 4)

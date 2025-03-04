@@ -82,7 +82,7 @@ heston_model = HestonProblem(μ, κ, θ, σ, ρ, [50.0, v0], tspan, seed=rand(UI
 
 sol = solve(heston_model, EM(), dt=1e-3, adaptive=false, saveat=tspan[1]:0.1:tspan[2], isoutofdomain=check_domain)
 ensemble_prob = EnsembleProblem(heston_model, prob_func=reseed_heston, safetycopy=false)
-sim = solve(ensemble_prob, EM(), dt=5e-3, adaptive=false, EnsembleThreads(), trajectories=500, saveat=tspan[1]:1.0:tspan[2])
+sim = solve(ensemble_prob, SRIW2(), dt=5e-3, adaptive=false, EnsembleThreads(), trajectories=500, saveat=tspan[1]:1.0:tspan[2])
 
 println("Done simulating! (base problem)")
 

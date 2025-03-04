@@ -20,6 +20,9 @@ Random.seed!(1234)
 μ = log(1.1) / 252
 σ = 0.2 / sqrt(252)
 
+tspan = (0.0, 252.0)
+
+
 function BlackScholesProblem(μ, σ, u0, tspan; seed=UInt64(0), kwargs...)
     f = function (du, u, p, t)
         du[1] = μ * u[1]

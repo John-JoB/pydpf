@@ -98,4 +98,4 @@ save_path = "./Lorenz 96/data/L96_SYSTEM_$(current_datetime_fs_string)_$(state_d
 
 
 
-df_out = save_sim_obs_to_file(save_path, sim, observations);
+# df_out = save_sim_obs_to_file(save_path, sim, observations);

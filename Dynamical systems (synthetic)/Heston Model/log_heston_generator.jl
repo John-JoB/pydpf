@@ -13,9 +13,9 @@ using CSV
 
 
 
-Random.seed!(1234)
+Random.seed!(12345)
 
-μ = (0.07) / 252
+μ = log(1.1) / 252
 # θ = 6.47e-5
 # κ = 0.097
 # σ = 5.38e-3
@@ -24,11 +24,14 @@ Random.seed!(1234)
 # θ = 0.0055 / sqrt(252)
 # θ = 0.0055 / sqrt(252)
 θ = 2e-4
+# θ = 0.10 / sqrt(252)
+
 
 # κ = 5.0
 κ = 1.0
 
 σ = 0.2 / sqrt(252)
+# σ = 0
 
 ρ = -0.70
 # ρ = 0.0
@@ -96,9 +99,9 @@ check_domain(u, p, t) = u[2] < 0.0
 log_heston_model = LogHestonProblem(μ, κ, θ, σ, ρ, log.([50.0, v0]), tspan, seed=rand(UInt64))
 
 
-sol = solve(log_heston_model, SRIW1(), dt=1e-3, adaptive=false, saveat=tspan[1]:0.1:tspan[2], isoutofdomain=check_domain)
+sol = solve(log_heston_model, EM(), dt=1e-3, adaptive=false, saveat=tspan[1]:0.1:tspan[2], isoutofdomain=check_domain)
 ensemble_prob = EnsembleProblem(log_heston_model, prob_func=reseed_log_heston, safetycopy=false)
-sim = solve(ensemble_prob, SRIW1(), dt=1e-3, adaptive=false, EnsembleThreads(), trajectories=100, saveat=tspan[1]:1.0:tspan[2], save_everystep = false)
+sim = solve(ensemble_prob, EM(), dt=5e-3, adaptive=false, EnsembleThreads(), trajectories=500, saveat=tspan[1]:1.0:tspan[2], save_everystep=false)
 
 println("Done simulating! (log problem)")
 
@@ -128,36 +131,48 @@ t_steps = range(0, 252, step=1.0)
 
 observations, states = extract_state_and_observations(sim, t_steps)
 
+println("Obs test stats")
 println(mean([exp(o[end]) for o in observations]))
+println(mean([exp(o[end])/exp(o[begin]) for o in observations]))
 println(std([exp(o[end]) for o in observations]))
 
+println(mean([exp(o[100]) for o in observations]))
+println(mean([exp(o[100])/exp(o[begin]) for o in observations]))
+println(std([exp(o[100]) for o in observations]))
 
-# function expand_vector_col!(df, col)
-#     col_width = length(df[begin, col])
-#     target_cols = ["$(col)_$i" for i in 1:col_width]
-#     transform!(df, col => ByRow(identity) => target_cols)
-#     select!(df, Not(col))
-# end
+println("\nState test stats")
+println(mean([exp(o[end]) for o in states]))
+println(std([exp(o[end]) for o in states]))
 
-# function save_sim_obs_to_file(path, states, obs, t_steps)
-#     mkpath(path)
-#     dataframes_vector = Vector{DataFrame}(undef, length(obs))
-#     Threads.@threads for idx in eachindex(obs)
-#         dataframes_vector[idx] = DataFrame(series_id=idx, t=collect(t_steps), state=states[idx], observation=obs[idx])
-#         expand_vector_col!(dataframes_vector[idx], "state")
-#         expand_vector_col!(dataframes_vector[idx], "observation")
-#     end
-#     dataframe_joined = vcat(dataframes_vector...)
-#     CSV.write(path * "simulated_data.csv", dataframe_joined)
-#     return dataframe_joined
-# end
+println(mean([exp(o[100]) for o in states]))
+println(std([exp(o[100]) for o in states]))
 
-# params = Dict("r" => μ, "k" => κ, "theta" => θ, "sigma" => σ, "rho" => ρ)
-# save_path = "./Heston Model/data/synthetic_log_run/";
+function expand_vector_col!(df, col)
+    col_width = length(df[begin, col])
+    target_cols = ["$(col)_$i" for i in 1:col_width]
+    transform!(df, col => ByRow(identity) => target_cols)
+    select!(df, Not(col))
+end
 
-# open(save_path * "params.json", "w") do f
-#     JSON.print(f, params, 4)
-# end
+function save_sim_obs_to_file(path, states, obs, t_steps)
+    mkpath(path)
+    dataframes_vector = Vector{DataFrame}(undef, length(obs))
+    Threads.@threads for idx in eachindex(obs)
+        dataframes_vector[idx] = DataFrame(series_id=idx, t=collect(t_steps), state=states[idx], observation=obs[idx])
+        expand_vector_col!(dataframes_vector[idx], "state")
+        expand_vector_col!(dataframes_vector[idx], "observation")
+    end
+    dataframe_joined = vcat(dataframes_vector...)
+    CSV.write(path * "simulated_data.csv", dataframe_joined)
+    return dataframe_joined
+end
+
+params = Dict("r" => μ, "k" => κ, "theta" => θ, "sigma" => σ, "rho" => ρ)
+save_path = "./Heston Model/data/synthetic_log_run_2/";
+
+open(save_path * "params.json", "w") do f
+    JSON.print(f, params, 4)
+end
 
 
-# df_out = save_sim_obs_to_file(save_path, states, observations, t_steps);
+df_out = save_sim_obs_to_file(save_path, states, observations, t_steps);

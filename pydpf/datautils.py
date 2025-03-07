@@ -225,6 +225,9 @@ class StateSpaceDataset(Dataset):
                     new_series = new_series.unsqueeze(-1)
                 start_index = new_data.size(-1)
                 self.data['tensor'] = torch.cat((new_data, new_series), dim=-1)
+                for series in self.data_order:
+                    if self.data['indices'][series][0] > self.data['indices'][modified_series][0]:
+                        self.data['indices'][series] = range(self.data['indices'][series][0]-new_series.size(-1), self.data['indices'][series][-1] + 1 - new_series.size(-1))
                 self.data['indices'][modified_series] = range(start_index, self.data['tensor'].size(-1))
                 return
             self.data_order = [series for series in true_order if (series in self.data_order or series == modified_series)]

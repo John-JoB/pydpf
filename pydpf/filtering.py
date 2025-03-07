@@ -122,6 +122,8 @@ class SIS(Module):
             self.aggregation_function = aggregation_function
             output_dict = False
 
+        log_N = torch.log(torch.tensor(n_particles, dtype=torch.float32, device=observation.device))
+
         if self.training or not torch.is_grad_enabled():
             gradient_regulariser = None
         gt_exists = False
@@ -129,6 +131,7 @@ class SIS(Module):
             gt_exists = True
         time_data = self._get_time_data(0, observation = observation, control = control, time = time, series_metadata = series_metadata)
         state, weight, likelihood = self.initial_proposal(n_particles = n_particles, **time_data)
+        likelihood = likelihood - log_N
 
         if output_dict:
             output = {}
@@ -152,6 +155,7 @@ class SIS(Module):
                 prev_state = state
                 prev_weight = weight
                 state, weight, likelihood = self.proposal(prev_state = state, prev_weight = weight, **time_data)
+                likelihood = likelihood - log_N
                 if not gradient_regulariser is None:
                     state, weight = gradient_regulariser(state = state, weight = weight, prev_state= prev_state, prev_weight = prev_weight)
                 if output_dict:

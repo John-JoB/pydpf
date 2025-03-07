@@ -6,6 +6,7 @@ using Random
 using Statistics
 using DifferentialEquations.EnsembleAnalysis
 import RandomNumbers: Xorshifts
+using JSON
 
 
 Random.seed!(1)
@@ -79,8 +80,46 @@ p1 = plot(sol, lw=1.5, size=(666, 200), dpi=300, label="", idxs=(0, 1), ylabel="
 p2 = plot(sol, lw=1.5, size=(666, 200), dpi=300, label="", idxs=((t, v) -> (t, v), 0, 2), ylabel="Sq. Volatility")
 plot(p1, p2, layout=(2, 1), size=(600, 600))
 
-# summ = EnsembleSummary(sim)
-# plot(summ)
-# p1_ens = plot(sim, lw=1.5, size=(666, 200), dpi=300, label="", idxs=(0, 1), ylabel="Price")
-# p2_ens = plot(sim, lw=1.5, size=(666, 200), dpi=300, label="", idxs=((t, v) -> (t, v), 0, 2), ylabel="Sq. Volatility")
-# plot(p1_ens, p2_ens, layout=(2, 1), size=(600, 600))
+
+function extract_observations(ensemble, t_steps)
+    num_sims = length(ensemble)
+    observation_array = Vector{Vector{Vector{Float64}}}(undef, num_sims)
+    for i in eachindex(ensemble)
+        observation_array[i] = [getindex.(ensemble[i](t_steps).u, Ref(1)), ]
+    end
+    return observation_array
+end
+
+t_steps = range(0, 252, step=1.0)
+
+observations = extract_observations(sim, t_steps)
+
+function expand_vector_col!(df, col)
+    col_width = length(df[begin, col])
+    target_cols = ["$(col)_$i" for i in 1:col_width]
+    transform!(df, col => ByRow(identity) => target_cols)
+    select!(df, Not(col))
+end
+
+function save_sim_obs_to_file(path, sim, obs)
+    mkpath(path)
+    dataframes_vector = Vector{DataFrame}(undef, length(sim))
+    Threads.@threads for idx in eachindex(sim)
+        dataframes_vector[idx] = DataFrame(series_id=idx, t=sim[idx].t, state=sim[idx].u, observation=obs[idx])
+        expand_vector_col!(dataframes_vector[idx], "state")
+        expand_vector_col!(dataframes_vector[idx], "observation")
+    end
+    dataframe_joined = vcat(dataframes_vector...)
+    CSV.write(path * "simulated_data.csv", dataframe_joined)
+    return dataframe_joined
+end
+
+params = Dict("r" => μ, "k" => κ, "theta" => θ, "sigma" => σ, "rho" => ρ)
+save_path = "./Heston Model/data/synthetic_run/";
+
+open(save_path * "params.json") do f
+    JSON.print(f, params, 4)
+end
+
+
+df_out = save_sim_obs_to_file(save_path*"runs/", sim, observations);

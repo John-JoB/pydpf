@@ -72,9 +72,9 @@ class KalmanFilter(Module):
         observation_bias = self.observation_model.mean_fun.bias
         observation_kernel_covariance = self.observation_model.dist.cholesky_covariance @ self.observation_model.dist.cholesky_covariance.T
 
-        posterior_means = [0]*(time_extent+1)
-        posterior_covariances = [0]*(time_extent+1)
-        likelihood_factors = [0]*(time_extent+1)
+        posterior_means = torch.empty((time_extent+1, observation.size(1), prior_mean.size(-1)), device = observation.device, dtype=observation.dtype)
+        posterior_covariances = torch.empty((time_extent+1, observation.size(1), prior_mean.size(-1), prior_mean.size(-1)), device = observation.device, dtype=observation.dtype)
+        likelihood_factors = torch.empty((time_extent+1, observation.size(1)), device = observation.device, dtype=observation.dtype)
         observation_mean, observation_covariance = self.propagate(prior_mean.unsqueeze(0), prior_covariance, observation_weight, observation_bias, observation_kernel_covariance)
         posterior_means[0], posterior_covariances[0] = self.Bayes_update(prior_mean.unsqueeze(0), prior_covariance, observation[0], observation_weight, observation_bias, observation_kernel_covariance)
         likelihood_factors[0] = self.Gaussian_log_density(observation_mean, observation_covariance, observation[0])
@@ -85,4 +85,4 @@ class KalmanFilter(Module):
             likelihood_factors[t+1] = self.Gaussian_log_density(observation_mean, observation_covariance, observation[t+1])
             posterior_means[t+1], posterior_covariances[t+1] = self.Bayes_update(predictive_mean, predictive_covariance, observation[t+1], observation_weight, observation_bias, observation_kernel_covariance)
 
-        return torch.stack(posterior_means), torch.stack(posterior_covariances), torch.stack(likelihood_factors)
+        return posterior_means, posterior_covariances, likelihood_factors

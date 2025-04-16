@@ -163,12 +163,12 @@ class SIS(Module):
                         if gt_exists:
                             output[name][t] = function(state=state, weight=weight, likelihood=likelihood, ground_truth=ground_truth[t], **time_data)
                         else:
-                            output[name][t] = function(state=state, weight=weight, **time_data)
+                            output[name][t] = function(state=state, weight=weight, likelihood=likelihood, **time_data)
                 else:
                     if gt_exists:
                         output[t] = aggregation_function(state=state, weight=weight, likelihood=likelihood, ground_truth = ground_truth[t], **time_data)
                     else:
-                        output[t] = aggregation_function(state=state, weight=weight, **time_data)
+                        output[t] = aggregation_function(state=state, weight=weight, likelihood=likelihood, **time_data)
             except DivergenceError as e:
                 warn(f'Detected divergence at time-step {t} with message:\n    {e} \nStopping iteration early.')
                 return output[:t-1]
@@ -231,14 +231,14 @@ class ParticleFilter(SIS):
         else:
             if self.REINFORCE:
                 def prior(n_particles, observation, **data):
-                    state = self.initial_proposal_model.sample(batch_size = observation.size(0), n_particles = n_particles, **data).detach()
+                    state = self.initial_proposal_model.sample(batch_size = observation.size(0), n_particles = n_particles, observation=observation, **data).detach()
                     weight = (self.SSM.observation_model.score(state = state, observation = observation, **data)
                               - self.SSM.initial_proposal_model.log_density(state = state, observation = observation, **data).detach()
                               + self.SSM.prior_model.log_density(state = state, **data))
                     return state, weight
             else:
                 def prior(n_particles, observation, **data):
-                    state = self.initial_proposal_model.sample(batch_size = observation.size(0), n_particles = n_particles, **data)
+                    state = self.initial_proposal_model.sample(batch_size = observation.size(0), n_particles = n_particles, observation=observation, **data)
                     weight = (self.SSM.observation_model.score(state = state, observation = observation, **data)
                               - self.SSM.initial_proposal_model.log_density(state = state, observation = observation, **data)
                               + self.SSM.prior_model.log_density(state = state, **data))
@@ -259,14 +259,14 @@ class ParticleFilter(SIS):
         else:
             if self.REINFORCE:
                 def prop(prev_state, prev_weight, observation, **data):
-                    new_state = self.SSM.proposal_model.sample(prev_state = prev_state, **data).detach()
+                    new_state = self.SSM.proposal_model.sample(prev_state = prev_state, observation=observation, **data).detach()
                     new_weight = (prev_weight + self.SSM.observation_model.score(state = new_state, observation = observation, **data)
                                   - self.SSM.proposal_model.log_density(state = new_state, prev_state = prev_state, observation = observation, **data).detach()
                                   + self.SSM.dynamic_model.log_density(state = new_state, prev_state = prev_state, **data))
                     return new_state, new_weight
             else:
                 def prop(prev_state, prev_weight, observation, **data):
-                    new_state = self.SSM.proposal_model.sample(prev_state = prev_state, **data)
+                    new_state = self.SSM.proposal_model.sample(prev_state = prev_state, observation=observation, **data)
                     new_weight = (prev_weight + self.SSM.observation_model.score(state = new_state, observation = observation, **data)
                                   - self.SSM.proposal_model.log_density(state = new_state, prev_state = prev_state, observation = observation, **data)
                                   + self.SSM.dynamic_model.log_density(state = new_state, prev_state = prev_state, **data))

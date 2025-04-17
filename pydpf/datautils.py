@@ -29,25 +29,25 @@ class StateSpaceDataset(Dataset):
     @property
     def state(self):
         if 'state' in self.data_order:
-            return self.data['tensor'][:, :, self.data['indices']['state']]
+            return self.data['tensor'][:, :, self.data['indices']['state']].permute(1, 0, 2).contiguous()
         raise AttributeError('No state data available')
 
     @property
     def observation(self):
         if 'observation' in self.data_order:
-            return self.data['tensor'][:, :, self.data['indices']['observation']]
+            return self.data['tensor'][:, :, self.data['indices']['observation']].permute(1, 0, 2).contiguous()
         raise AttributeError('No state data available')
 
     @property
     def time(self):
         if 'time' in self.data_order:
-            return self.data['tensor'][:, :, self.data['indices']['time']]
+            return self.data['tensor'][:, :, self.data['indices']['time']].squeeze(-1).permute(1, 0, 2).contiguous()
         raise AttributeError('No time data available')
 
     @property
     def control(self):
         if 'control' in self.data_order:
-            return self.data['tensor'][:, :, self.data['indices']['control']]
+            return self.data['tensor'][:, :, self.data['indices']['control']].permute(1, 0, 2).contiguous()
         raise AttributeError('No control data available')
 
     @property
@@ -112,11 +112,11 @@ class StateSpaceDataset(Dataset):
             batch = tuple(zip(*batch))
             collated_data = torch.stack(batch[0], dim=0).transpose(0, 1)
             collated_metadata = torch.stack(batch[1], dim=0)
-            return (*(collated_data[:, :, self.data['indices'][data_category]].squeeze().contiguous() if data_category == "time" else collated_data[:, :, self.data['indices'][data_category]].contiguous() for data_category in self.data_order),
+            return (*(collated_data[:, :, self.data['indices'][data_category]].squeeze(-1).contiguous() if data_category == "time" else collated_data[:, :, self.data['indices'][data_category]].contiguous() for data_category in self.data_order),
                     collated_metadata)
         else:
             collated_batch = torch.stack(batch, dim=0).transpose(0, 1)
-            return *(collated_batch[:, :, self.data['indices'][data_category]].squeeze().contiguous() if data_category == "time" else collated_batch[:, :, self.data['indices'][data_category]].contiguous() for data_category in self.data_order),
+            return *(collated_batch[:, :, self.data['indices'][data_category]].squeeze(-1).contiguous() if data_category == "time" else collated_batch[:, :, self.data['indices'][data_category]].contiguous() for data_category in self.data_order),
 
     def normalise_dims(self, normalise_state: bool, scale_dims: str = 'all', individual_timesteps: bool = True, dims: Union[Tuple[int], None] = None) -> Tuple[torch.Tensor, torch.Tensor]:
         """

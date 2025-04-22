@@ -135,7 +135,7 @@ def sinkhorn_loop(log_a: Tensor, log_b: Tensor, cost: Tensor, epsilon: float, th
     f_i = torch.zeros_like(log_a, device=device)
     g_i = torch.zeros_like(log_b, device=device)
     cost_T = torch.transpose(cost, 1, 2)
-    epsilon_now = torch.clip(diam ** 2, max=epsilon)
+    epsilon_now = torch.clip(diam ** 2, min=epsilon)
     continue_criterion = torch.ones((f_i.size(0),), device=device, dtype=torch.bool).unsqueeze(1)
 
     def stop_criterion(i_, continue_criterion_):
@@ -149,7 +149,7 @@ def sinkhorn_loop(log_a: Tensor, log_b: Tensor, cost: Tensor, epsilon: float, th
             update_size = torch.maximum(torch.abs(f_u - f_i), torch.abs(g_u - g_i))
             update_size = torch.max(update_size, dim=1)[0]
             continue_criterion = torch.logical_or(update_size > threshold, epsilon_now.squeeze() > epsilon).unsqueeze(1)
-            epsilon_now = torch.clip(rate * epsilon_now, epsilon)
+            epsilon_now = torch.clip(rate * epsilon_now, min=epsilon)
             f_i = f_u
             g_i = g_u
             i += 1

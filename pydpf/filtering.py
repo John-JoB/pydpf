@@ -709,36 +709,6 @@ class MarginalStopGradientDPF(MarginalParticleFilter):
             return
         super().__init__(SystematicResampler(resampling_generator), SSM, 'partial')
 
-class REINFORCEDPF(MarginalParticleFilter):
-    def __init__(self, SSM: FilteringModel = None,
-                 resampling_generator: torch.Generator = torch.default_generator,
-                 multinomial = False) -> None:
-        """
-        Differentiable particle filter with marginalised stop-gradient resampling.
-
-        Parameters
-        ----------
-        SSM: FilteringModel
-            A FilteringModel that represents the SSM (and optionally a proposal model). See the documentation of FilteringModel for more complete information.
-            If this parameter is not None then the values of initial_proposal and proposal are ignored.
-        initial_proposal: ImportanceSampler
-            Importance sampler for the initial distribution, takes the number of particles and the data at time 0,
-            and returns the importance sampled state and weights
-        proposal: ImportanceKernel
-            Importance sampler for the proposal kernel, takes the state, weights and data and returns the new states and weights.
-        resampling_generator:
-            The generator to track the resampling rng.
-
-        Warnings
-        ---------
-        In the current implementation, this filter is the only case where taking an SSM with a null proposal is not equivalent to the bootstrap formulation.
-        """
-        if multinomial:
-            super().__init__(MultinomialResampler(resampling_generator), SSM, 'full')
-            return
-        super().__init__(SystematicResampler(resampling_generator), SSM, 'full')
-
-
 class KernelDPF(ParticleFilter):
 
     def __init__(self, SSM: FilteringModel = None, kernel: KernelMixture = None, use_REINFORCE_for_proposal:bool = False) -> None:
@@ -769,72 +739,3 @@ class KernelDPF(ParticleFilter):
             raise ValueError('Must specify a kernel mixture')
 
         super().__init__(KernelResampler(kernel), SSM, use_REINFORCE_for_proposal)
-
-
-class VariationalDPF(ParticleFilter):
-
-    def __init__(self, SSM: FilteringModel = None) -> None:
-        """
-            Differentiable particle filter with mixture kernel resampling (Younis and Sudderth 'Differentiable and Stable Long-Range Tracking of Multiple Posterior Modes' 2024).
-
-
-
-            Parameters
-            ----------
-            SSM: FilteringModel
-                A FilteringModel that represents the SSM (and optionally a proposal model). See the documentation of FilteringModel for more complete information.
-                If this parameter is not None then the values of initial_proposal and proposal are ignored.
-            initial_proposal: ImportanceSampler
-                Importance sampler for the initial distribution, takes the number of particles and the data at time 0,
-                and returns the importance sampled state and weights
-            proposal: ImportanceKernel
-                Importance sampler for the proposal kernel, takes the state, weights and data and returns the new states and weights.
-            kernel: KernelMixture
-                The kernel mixture to convolve over the particles to form the KDE sampling distribution.
-
-            Returns
-            -------
-            kernel_resampler: Callable[[Tensor, Tensor], Tuple[Tensor, Tensor, Tensor]]:
-                A Module whose forward method implements kernel resampling.
-        """
-
-        super().__init__(VariationalResampler(), SSM)
-
-
-class SVGDKernelDPF(ParticleFilter):
-
-    def __init__(self, SSM: FilteringModel = None, kernel: KernelMixture = None, lr:float=1e-2, alpha:float=0.9, iterations:int=100, *, initial_proposal: ImportanceSampler = None, proposal: ImportanceKernel = None) -> None:
-        """
-            Differentiable particle filter with mixture kernel resampling (Younis and Sudderth 'Differentiable and Stable Long-Range Tracking of Multiple Posterior Modes' 2024).
-
-
-
-            Parameters
-            ----------
-            SSM: FilteringModel
-                A FilteringModel that represents the SSM (and optionally a proposal model). See the documentation of FilteringModel for more complete information.
-                If this parameter is not None then the values of initial_proposal and proposal are ignored.
-            initial_proposal: ImportanceSampler
-                Importance sampler for the initial distribution, takes the number of particles and the data at time 0,
-                and returns the importance sampled state and weights
-            proposal: ImportanceKernel
-                Importance sampler for the proposal kernel, takes the state, weights and data and returns the new states and weights.
-            kernel: KernelMixture
-                The kernel mixture to convolve over the particles to form the KDE sampling distribution.
-
-            Returns
-            -------
-            kernel_resampler: Callable[[Tensor, Tensor], Tuple[Tensor, Tensor, Tensor]]:
-                A Module whose forward method implements kernel resampling.
-        """
-        if kernel is None:
-            raise ValueError('Must specify a kernel mixture')
-
-        super().__init__(SVGD_kernel_resampling(kernel, lr, alpha, iterations), SSM)
-
-class AuxiliaryDPF(ParticleFilter):
-    def __init__(self, SSM: FilteringModel, n_repeats, resampling_generator, multinomial:bool =False) -> None:
-        if multinomial:
-            super().__init__(AuxiliaryResampler(SSM, n_repeats, MultinomialResampler(resampling_generator)), SSM)
-            return
-        super().__init__(AuxiliaryResampler(SSM, n_repeats, SystematicResampler(resampling_generator)), SSM)

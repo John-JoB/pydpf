@@ -4,7 +4,7 @@ import torch
 from torch import Tensor
 from .utils import normalise
 from .base import Module
-from pydpf.resampling import SystematicResampler, SoftResampler, OptimalTransportResampler, StopGradientResampler, KernelResampler, VariationalResampler, SVGD_kernel_resampling, AuxiliaryResampler, MultinomialResampler
+from pydpf.resampling import SystematicResampler, SoftResampler, OptimalTransportResampler, StopGradientResampler, KernelResampler, MultinomialResampler
 from .distributions import KernelMixture
 from .model_based_api import FilteringModel
 from .base import DivergenceError
@@ -249,12 +249,12 @@ class ParticleFilter(SIS):
                 def prop(prev_state, prev_weight, observation, **data):
                     new_state = self.SSM.dynamic_model.sample(prev_state = prev_state, **data).detach()
                     density = self.SSM.dynamic_model.log_density(state=new_state, prev_state=prev_state, **data)
-                    new_weight = prev_weight + self.SSM.observation_model.score(new_state, observation = observation, **data) + density - density.detach()
+                    new_weight = prev_weight + self.SSM.observation_model.score(state=new_state, observation = observation, **data) + density - density.detach()
                     return new_state, new_weight
             else:
                 def prop(prev_state, prev_weight, observation, **data):
                     new_state = self.SSM.dynamic_model.sample(prev_state = prev_state, **data)
-                    new_weight = prev_weight + self.SSM.observation_model.score(new_state, observation = observation, **data)
+                    new_weight = prev_weight + self.SSM.observation_model.score(state=new_state, observation = observation, **data)
                     return new_state, new_weight
         else:
             if self.REINFORCE:

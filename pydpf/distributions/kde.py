@@ -111,7 +111,7 @@ class KernelMixture(Distribution):
         cov = torch.nn.Parameter(torch.eye(dim, device=self.generator.device) * torch.rand(dim, device=self.generator.device, generator=self.generator))
         return MultivariateGaussian(torch.zeros(dim, device=self.generator.device), cov, generator=self.generator, gradient_estimator='none', diagonal_cov=True)
 
-    def __init__(self, kernel: Union[List[Tuple[str, int]]], gradient_estimator: str, generator: Union[torch.Generator, None]):
+    def __init__(self, kernel: Union[List[Tuple[str, int]], Distribution], gradient_estimator: str, generator: Union[torch.Generator, None]):
         """
         Create a kernel density mixture.
         The parameter kernel is an unconditional distribution which will be convolved over the kernel density mixture.

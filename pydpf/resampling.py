@@ -120,10 +120,10 @@ class SoftResampler(Module):
 
     def forward(self, state:Tensor, weight:Tensor, **data) -> WeightedSample:
         soft_weight = torch.logaddexp(weight + self.log_softness, self.neg_log_softness - torch.log(torch.tensor(weight.size(1), device=state.device)))
-        state, _ = self.resampler(state, soft_weight)
+        state, output_weights = self.resampler(state, soft_weight)
         self.cache = self.resampler.cache
         if self._need_weight_output:
-            return state, batched_select(weight, self.cache['sampled_indices']) - batched_select(soft_weight, self.cache['sampled_indices'])
+            return state, batched_select(weight, self.cache['sampled_indices']) - batched_select(self.cache['used_weight'], self.cache['sampled_indices'])
         return state
 
 

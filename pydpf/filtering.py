@@ -124,7 +124,7 @@ class SIS(Module):
 
         log_N = torch.log(torch.tensor(n_particles, dtype=torch.float32, device=observation.device))
 
-        if self.training or not torch.is_grad_enabled():
+        if not self.training or not torch.is_grad_enabled():
             gradient_regulariser = None
         gt_exists = False
         if ground_truth is not None:
@@ -157,7 +157,7 @@ class SIS(Module):
                 state, weight, likelihood = self.proposal(prev_state = state, prev_weight = weight, **time_data)
                 likelihood = likelihood - log_N
                 if not gradient_regulariser is None:
-                    state, weight = gradient_regulariser(state = state, weight = weight, prev_state= prev_state, prev_weight = prev_weight)
+                    state, weight = gradient_regulariser.apply( state, weight, prev_state, prev_weight)
                 if output_dict:
                     for name, function in aggregation_function.items():
                         if gt_exists:
@@ -171,7 +171,10 @@ class SIS(Module):
                         output[t] = aggregation_function(state=state, weight=weight, likelihood=likelihood, **time_data)
             except DivergenceError as e:
                 warn(f'Detected divergence at time-step {t} with message:\n    {e} \nStopping iteration early.')
-                return output[:t-1]
+                if isinstance(output, dict):
+                    return {name: value[:t-1] for name, value in output.items()}
+                else:
+                    return output[:t-1]
         return output
 
 

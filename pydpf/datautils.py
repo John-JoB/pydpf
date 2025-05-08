@@ -41,7 +41,7 @@ class StateSpaceDataset(Dataset):
     @property
     def time(self):
         if 'time' in self.data_order:
-            return self.data['tensor'][:, :, self.data['indices']['time']].squeeze(-1).permute(1, 0, 2).contiguous()
+            return self.data['tensor'][:, :, self.data['indices']['time']].squeeze(-1).permute(1, 0).contiguous()
         raise AttributeError('No time data available')
 
     @property
@@ -118,7 +118,7 @@ class StateSpaceDataset(Dataset):
             collated_batch = torch.stack(batch, dim=0).transpose(0, 1)
             return *(collated_batch[:, :, self.data['indices'][data_category]].squeeze(-1).contiguous() if data_category == "time" else collated_batch[:, :, self.data['indices'][data_category]].contiguous() for data_category in self.data_order),
 
-    def normalise_dims(self, normalise_state: bool, scale_dims: str = 'all', individual_timesteps: bool = True, dims: Union[Tuple[int], None] = None) -> Tuple[torch.Tensor, torch.Tensor]:
+    def normalise_dims(self, normalised_series:str = 'observation', scale_dims: str = 'all', individual_timesteps: bool = False, dims: Union[Tuple[int], None] = None) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Normalise the data to have mean zero and standard deviation one.
 
@@ -158,10 +158,8 @@ class StateSpaceDataset(Dataset):
         with torch.no_grad():
             if not scale_dims in ['all', 'max', 'min', 'norm']:
                 raise ValueError('scale_dims must be one of "all", "max", "min" or "norm"')
-            if normalise_state:
-                data = self.state
-            else:
-                data = self.observation
+
+            data = self.data['tensor'][:, :, self.data['indices'][normalised_series]].clone()
             data_size = data.size(-1)
             data = data.transpose(0, -1)
             if dims is None:
@@ -195,11 +193,8 @@ class StateSpaceDataset(Dataset):
             means = means.expand(masked_data.size())
             std = std.expand(masked_data.size())
             data[mask] = (masked_data - means) / std
-            if normalise_state:
-                self.state.data = data.transpose(0, -1)
-            else:
-                self.observation.data = data.transpose(0, -1)
-            return means.transpose(0, -1), std.transpose(0, -1)
+            self.apply(lambda **data_dict : data.transpose(0,1), modified_series=normalised_series)
+            return means.transpose(0, -1).transpose(0,1).contiguous(), std.transpose(0, -1).transpose(0,1).contiguous()
 
     def apply(self, f, modified_series:str = 'observation'):
         """
@@ -214,10 +209,10 @@ class StateSpaceDataset(Dataset):
             if not modified_series in true_order:
                 raise ValueError('modified_series must be one of "state", "observation", "control", "time", or "metadata"')
 
-            partitioned_data = {data_category: self.data['tensor'][:, :, self.data['indices'][data_category]].contiguous() for data_category in self.data_order}
+            partitioned_data = {data_category: self.data['tensor'][:, :, self.data['indices'][data_category]].transpose(0,1).contiguous() for data_category in self.data_order}
             if self.metadata_exists:
                 partitioned_data['metadata'] = self.data['metadata']
-            new_series = f(**partitioned_data)
+            new_series = f(**partitioned_data).transpose(0,1)
             if modified_series in self.data_order:
                 inverse_index = [i for i in range(self.data['tensor'].size(-1)) if (i not in self.data['indices'][modified_series])]
                 new_data = self.data['tensor'][:, :, inverse_index]
@@ -299,7 +294,8 @@ def simulate_and_save(data_path: Union[Path, str],
                     device: Union[str, torch.device] = torch.device('cpu'),
                     control: Tensor = None,
                     time:Tensor = None,
-                    n_processes = -1):
+                    n_processes = -1,
+                    by_pass_ask = False):
 
     if SSM is not None:
         prior = lambda _batch_size, **_data_dict:  torch.squeeze(SSM.prior_model.sample(_batch_size, 1, **_data_dict), 1)
@@ -311,14 +307,15 @@ def simulate_and_save(data_path: Union[Path, str],
         state_list = []
         observation_list = []
         if data_path.is_file():
-            print(f'Warning - file already exists at {data_path}, continuing could overwrite its data')
-            response = input('Continue? (y/n) ')
-            if response != 'Y' and response != 'y':
-                print('Halting')
-                return
+            if not by_pass_ask:
+                print(f'Warning - file already exists at {data_path}, continuing could overwrite its data')
+                response = input('Continue? (y/n) ')
+                if response != 'Y' and response != 'y':
+                    print('Halting')
+                    return
             os.remove(data_path)
     else:
-        if data_path.is_dir():
+        if data_path.is_dir() and not by_pass_ask:
             print(f'Warning - folder already exists at {data_path}, continuing could overwrite its data')
             response = input('Continue? (y/n) ')
             if response != 'Y' and response != 'y':

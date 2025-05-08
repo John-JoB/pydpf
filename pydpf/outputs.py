@@ -115,3 +115,20 @@ class NegLogDataLikelihood_Loss(Module):
 
     def forward(self, *, state: Tensor, weight: Tensor, ground_truth, **kwargs):
         return -self.KDE.log_density(ground_truth, state, weight)
+
+class State(Module):
+
+    def __init__(self):
+      super().__init__()
+
+    def forward(self, *, state: Tensor, **data):
+        return state
+
+
+class Weight(Module):
+
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, *, weight: Tensor, **data):
+        return weight

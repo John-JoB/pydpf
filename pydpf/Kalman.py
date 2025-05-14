@@ -8,7 +8,7 @@ class KalmanFilter(Module):
 
     half_log_2pi = (1 / 2) * torch.log(torch.tensor(2 * torch.pi))
 
-    def __init__(self, prior_model: MultivariateGaussian, dynamic_model:LinearGaussian, observation_model:LinearGaussian):
+    def __init__(self, prior_model:MultivariateGaussian = None, dynamic_model:LinearGaussian=None, observation_model:LinearGaussian=None):
         super().__init__()
         self.prior_model = prior_model
         self.dynamic_model = dynamic_model

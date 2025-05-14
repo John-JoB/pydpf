@@ -3,7 +3,7 @@ from .filtering import *
 from .resampling import *
 from . import utils
 from .base import *
-from . import distributions
+from .distributions import *
 from .outputs import *
 from .conditional_resampling import *
 from .gradient_regularisation import *

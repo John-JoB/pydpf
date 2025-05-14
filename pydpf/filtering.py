@@ -618,7 +618,7 @@ class OptimalTransportDPF(ParticleFilter):
     'Differentiable Particle Filtering via Entropy-Regularized Optimal Transport' 2021).
     """
     def __init__(self, SSM: FilteringModel = None,
-                 regularisation: float = 0.99,
+                 regularisation: float = 0.1,
                  step_size: float = 0.9,
                  min_update_size: float = 0.01,
                  max_iterations: int = 100,

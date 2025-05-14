@@ -107,6 +107,10 @@ class MultivariateGaussian(Distribution):
         return prefactor + exponent
 
 
+class StandardGaussian(Distribution):
+    def __new__(cls, dim, generator, *args, **kwargs):
+        return MultivariateGaussian(torch.zeros(dim, device = generator.device), cholesky_covariance=torch.eye(dim, device = generator.device), generator=generator)
+
 class _ConstCovGaussian(Distribution):
 
     conditional = True

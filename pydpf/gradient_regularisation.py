@@ -33,9 +33,6 @@ def ClipByElement(clip_threshold: float) -> type(GradientRegularisedSIS):
 
         Parameters
         ----------
-        base_SIS : SIS
-        The sequential importance sampler to modify the gradient of.
-
         clip_threshold: float
         The threshold above which to clip.
     """
@@ -56,8 +53,6 @@ def ClipByNorm(clip_threshold: float) -> type(GradientRegularisedSIS):
 
         Parameters
         ----------
-        base_SIS : SIS
-        The sequential importance sampler to modify the gradient of.
 
         clip_threshold: float
         The threshold above which to clip.
@@ -85,8 +80,6 @@ def ClipByParticle(clip_threshold: float) -> type(GradientRegularisedSIS):
 
     Parameters
     ----------
-    base_SIS : SIS
-    The sequential importance sampler to modify the gradient of.
 
     clip_threshold: float
     The threshold above which to clip.

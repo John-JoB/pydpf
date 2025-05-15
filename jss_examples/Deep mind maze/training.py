@@ -5,7 +5,7 @@ import pydpf
 import numpy as np
 from typing import Tuple
 from copy import deepcopy
-
+import einops
 from pydpf import ElBO_Loss
 
 def bind_angle(angle):
@@ -101,32 +101,34 @@ def train(dpf,
             dpf.update()
             opt.zero_grad()
             batch_size_now = observation.size(1)
+            #print(observation.size())
+            #observation = einops.rearrange(observation, 't b (c h w) -> (t b) c h w', c=3, h=24, w=24)
             observation = observation.to(device).reshape(observation.size(0)*observation.size(1), 3, 24, 24)
-
+            #print(observation.size())
             state = state.to(device)
             control = control.to(device)
             encoded_obs = encoder(observation)
             decoded_obs = decoder(encoded_obs)
             AE_loss = torch.mean((decoded_obs - observation) ** 2)
-            outputs = dpf(n_particles[0], time_extent, aggregation_function, observation=encoded_obs.reshape(time_extent+1, batch_size_now, encoded_obs.size(1)).contiguous(), ground_truth=state, control=control, gradient_regulariser = gradient_regulariser)
-            print(torch.sqrt(torch.mean(torch.sum(((outputs['Mean Pose'][-1,:,:2] - state[-1,:,:2])*position_scaling)**2, dim=-1))).item())
+            outputs = dpf(n_particles[0], time_extent, aggregation_function, observation=encoded_obs.reshape(100, batch_size_now, encoded_obs.size(1)).contiguous(), ground_truth=state, control=control, gradient_regulariser = gradient_regulariser)
+            #print(torch.sqrt(torch.mean(torch.sum(((outputs['Mean Pose'][-1,:,:2] - state[-1,:,:2])*position_scaling)**2, dim=-1))).item())
+
+            cos_loss = torch.mean((outputs['Mean Pose'][:,:,3] - torch.cos(state[:, :, 2]))**2)
+            sin_loss = torch.mean((outputs['Mean Pose'][:,:,2] - torch.sin(state[:, :, 2]))**2)
+            angle_loss = (cos_loss + sin_loss - 1)/2
+
+            #print(torch.sum((outputs['Mean Pose'][:,:,:2] - state[:outputs['Mean Pose'].size(0),:,:2])**2, dim=-1))
+            position_loss = torch.mean(torch.sum((outputs['Mean Pose'][:,:,:2] - state[:,:,:2])**2, dim=-1))
+            #print(position_loss)
+            loss = scalings[0]*position_loss + scalings[1]*angle_loss + AE_loss*scalings[2]
+            #print(outputs['Mean Pose'][:, 0])
+            loss.backward()
             #for n, param in dpf.named_parameters():
             #    print(n)
             #    if param.requires_grad and not param.grad is None:
             #        print(torch.sum(param.grad**2))
             #    else:
             #        print(f'No grad - {param.requires_grad}')
-            #raise SystemExit(0)
-            cos_loss = torch.mean((outputs['Mean Pose'][:,:,3] - torch.cos(state[:outputs['Mean Pose'].size(0), :, 2]))**2)
-            sin_loss = torch.mean((outputs['Mean Pose'][:,:,2] - torch.sin(state[:outputs['Mean Pose'].size(0), :, 2]))**2)
-            angle_loss = (cos_loss + sin_loss - 1)/2
-
-            #print(torch.sum((outputs['Mean Pose'][:,:,:2] - state[:outputs['Mean Pose'].size(0),:,:2])**2, dim=-1))
-            position_loss = torch.mean(torch.sum((outputs['Mean Pose'][:,:,:2] - state[:outputs['Mean Pose'].size(0),:,:2])**2, dim=-1))
-            #print(position_loss)
-            loss = scalings[0]*position_loss + scalings[1]*angle_loss + AE_loss*scalings[2]
-            #print(outputs['Mean Pose'][:, 0])
-            loss.backward()
 
             train_loss.append(loss.item()*state.size(1))
             opt.step()
@@ -134,7 +136,6 @@ def train(dpf,
         if lr_scheduler is not None:
             lr_scheduler.step()
         train_loss = np.sum(np.array(train_loss)) / total_size
-
         dpf.update()
         dpf.eval()
         with torch.inference_mode():
@@ -148,9 +149,9 @@ def train(dpf,
                 state = state.to(device)
                 control = control.to(device)
                 encoded_obs = encoder(observation)
-                outputs = dpf(n_particles[1], time_extent, validation_aggregation_function, observation=encoded_obs.reshape(time_extent+1, batch_size_now, encoded_obs.size(1)).contiguous(), ground_truth=state, control=control)
+                outputs = dpf(n_particles[1], time_extent, validation_aggregation_function, observation=encoded_obs.reshape(100, batch_size_now, encoded_obs.size(1)).contiguous(), ground_truth=state, control=control)
                 validation_Pos_MSE.append(torch.mean(torch.sum(((outputs['Mean Pose'][-1,:,:2] - state[-1,:,:2])*position_scaling)**2, dim=-1)).item()*state.size(1))
-                validation_Angle_MSE.append(torch.mean(bind_angle(bind_angle( outputs['Mean Pose'][:,:,2]) - bind_angle(state[:outputs['Mean Pose'].size(0),:,2]))**2).item()*state.size(1))
+                validation_Angle_MSE.append(torch.mean(bind_angle(bind_angle( outputs['Mean Pose'][:,:,2]) - bind_angle(state[:,:,2]))**2).item()*state.size(1))
                 total_size += state.size(1)
             validation_Pos_MSE= np.sum((np.array(validation_Pos_MSE))) / total_size
             validation_Angle_MSE = np.sum((np.array(validation_Angle_MSE))) / total_size
@@ -177,7 +178,7 @@ def train(dpf,
             state = state.to(device)
             control = control.to(device)
             encoded_obs = encoder(observation)
-            outputs = dpf(n_particles[1], time_extent, validation_aggregation_function, observation=encoded_obs.reshape(time_extent+1, batch_size_now, encoded_obs.size(1)).contiguous(), ground_truth=state, control =control)
+            outputs = dpf(n_particles[1], time_extent, validation_aggregation_function, observation=encoded_obs.reshape(100, batch_size_now, encoded_obs.size(1)).contiguous(), ground_truth=state, control =control)
             test_Pos_MSE.append(torch.mean(torch.sum(((outputs['Mean Pose'][-1,:,:2] - state[-1,:,:2])*position_scaling)**2, dim=-1)).item() * state.size(1))
             test_angle_MSE.append(torch.mean(bind_angle(bind_angle( outputs['Mean Pose'][:,:,2]) - bind_angle(state[:outputs['Mean Pose'].size(0),:,2]))**2).item()*state.size(1))
             total_size += state.size(1)

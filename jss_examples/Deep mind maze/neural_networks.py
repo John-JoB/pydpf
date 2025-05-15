@@ -1,8 +1,7 @@
 import torch
 import pydpf
 from math import floor, ceil
-
-from pyarrow import Tensor
+from torch import Tensor
 from torch.nn.init import kaiming_uniform_, _calculate_fan_in_and_fan_out, uniform_
 import math
 '''
@@ -90,7 +89,7 @@ class SeedableDropout(SeedableDropoutNd):
     def forward(self, input: Tensor) -> Tensor:
         if not self.training:
             return input
-        mask = (torch.rand(input.size(), device=input.device, dtype=torch.float32, generator = self.generator) < self.p).to(input.dtype)
+        mask = (torch.rand(input.size(), device=input.device, dtype=torch.float32, generator = self.generator) > self.p).to(input.dtype)
         return (
             input.multiply_(mask) if self.inplace else input * mask
         )
@@ -101,7 +100,7 @@ class SeedableDropout2d(SeedableDropoutNd):
             return input
         if input.dim() != 4:
             raise ValueError('SeedableDropout2d only supports Batch,Channel,Height,Width tensors')
-        mask = pydpf.multiple_unsqueeze((torch.rand((input.size(0), input.size(1)), device=input.device, dtype=torch.float32, generator = self.generator) < self.p).to(input.dtype), 2, -1)
+        mask = pydpf.multiple_unsqueeze((torch.rand((input.size(0), input.size(1)), device=input.device, dtype=torch.float32, generator = self.generator) > self.p).to(input.dtype), 2, -1)
         return (
             input.multiply_(mask) if self.inplace else input * mask
         )

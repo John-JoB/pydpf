@@ -9,7 +9,7 @@ def bind_angle(angle):
     return torch.where(out < -torch.pi, out + 2*torch.pi, out)
 
 
-def create_actions(pos):
+def create_actions_and_modify_state(pos):
     pos[:, 2] = pos[:, 2] * np.pi /180
     pos[:, 2] = bind_angle(pos[:, 2])
     diffs = torch.empty_like(pos)
@@ -31,9 +31,9 @@ def create_observations(obs, generator):
             offsets = np.random.random_integers(0, 8, 2)
             new_o[i] = obs[i, offsets[0]:offsets[0] + 24, offsets[1]:offsets[1] + 24, :3]
     new_o = new_o.to(dtype=torch.float16)
-    random = torch.normal(0.0, 20, new_o.shape, dtype=torch.float16, generator=generator, device=obs.device)
+    random = torch.normal(0.0, 20.0, new_o.shape, dtype=torch.float16, generator=generator, device=obs.device)
     new_o = torch.round(torch.clip(new_o + random, 0, 255)).to(dtype=torch.uint8)
-    new_o = new_o.transpose(1,-1)
+    new_o = new_o.permute(0, 3, 1, 2)
     return new_o.flatten(start_dim=1)
 
 
@@ -51,7 +51,7 @@ def prepare_data(device):
     data2 = dict(np.load(data_folder_path.joinpath('maze_data_raw_2.npz'), allow_pickle=True))
     state = torch.tensor(np.concatenate((data1['pose'], data2['pose']), axis=0), device=device, dtype=torch.float32)
     observation = torch.tensor(np.concatenate((data1['rgbd'], data2['rgbd']), axis=0), device=device, dtype=torch.uint8)
-    actions = create_actions(state)
+    actions = create_actions_and_modify_state(state)
     control_df = create_df(actions, 'control')
     observation = create_observations(observation, torch.Generator(device=device).manual_seed(0))
     observation_df = create_df(observation, 'observation')

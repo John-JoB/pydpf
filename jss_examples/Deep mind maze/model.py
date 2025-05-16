@@ -65,7 +65,7 @@ class SimpleMazeObservation(pydpf.Module):
     def score(self, state, observation, **data):
         b, n, _ = state.shape
         encoded_state = self.state_encoder(state)
-        return torch.log(torch.cosine_similarity(encoded_state, observation.unsqueeze(1), dim=-1) + 1)
+        return -torch.log(2 - torch.cosine_similarity(encoded_state, observation.unsqueeze(1), dim=-1))
 
 class MazeProposal(pydpf.Module):
     def __init__(self, flow_model, dynamic_model):

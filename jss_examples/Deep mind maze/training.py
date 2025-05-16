@@ -1,12 +1,9 @@
-from inspect import Parameter
 
 import torch
 import pydpf
 import numpy as np
 from typing import Tuple
 from copy import deepcopy
-import einops
-from pydpf import ElBO_Loss
 
 def bind_angle(angle):
     bound_angle = torch.remainder(angle, 2 * torch.pi)
@@ -42,11 +39,12 @@ def train(dpf,
           time_extent = None,
           lr_scheduler = None,
           pre_train_epochs=0,
-          device = torch.device('cuda:0')
+          device = torch.device('cuda:0'),
+          state_scaling = 1000.
           ):
 
     batch_size = list(batch_size)
-    position_scaling = torch.tensor([[[1000., 650.]]], device=device)
+    position_scaling = torch.tensor([[[state_scaling, state_scaling]]], device=device)
 
     aggregation_function = {'Mean Pose': pydpf.FilteringMean(lambda state: torch.concat([state[..., :2], torch.sin(state[..., 2:3]), torch.cos(state[..., 2:3])], dim=-1)), 'ELBO': pydpf.ElBO_Loss()}
     validation_aggregation_function = {'Mean Pose': pydpf.FilteringMean(lambda state: torch.concat([state[..., :2], bind_angle(state[..., 2:3])], dim=-1)), 'ELBO': pydpf.ElBO_Loss()}
@@ -152,6 +150,7 @@ def train(dpf,
                 outputs = dpf(n_particles[1], time_extent, validation_aggregation_function, observation=encoded_obs.reshape(100, batch_size_now, encoded_obs.size(1)).contiguous(), ground_truth=state, control=control)
                 validation_Pos_MSE.append(torch.mean(torch.sum(((outputs['Mean Pose'][-1,:,:2] - state[-1,:,:2])*position_scaling)**2, dim=-1)).item()*state.size(1))
                 validation_Angle_MSE.append(torch.mean(bind_angle(bind_angle( outputs['Mean Pose'][:,:,2]) - bind_angle(state[:,:,2]))**2).item()*state.size(1))
+                #print(torch.sum(((outputs['Mean Pose'][:,:,:2] - state[:,:,:2])*position_scaling)**2, dim=-1))
                 total_size += state.size(1)
             validation_Pos_MSE= np.sum((np.array(validation_Pos_MSE))) / total_size
             validation_Angle_MSE = np.sum((np.array(validation_Angle_MSE))) / total_size

@@ -175,7 +175,7 @@ class StopGradientResampler(Module):
 class OptimalTransportResampler(Module):
 
 
-    def __init__(self, regularisation: float, step_size: float, min_update_size: float, max_iterations: int, transport_gradient_clip: float):
+    def __init__(self, regularisation: float, decay_rate: float, min_update_size: float, max_iterations: int, transport_gradient_clip: float):
         r"""
             Module for performing optimal transport resampling, (A. Corenflos, J. Thornton, G. Deligiannidis and A. Doucet
             'Differentiable Particle Filtering via Entropy-Regularized Optimal Transport' 2021)
@@ -223,7 +223,7 @@ class OptimalTransportResampler(Module):
         super().__init__()
         self.cache = {}
         self.regularisation = regularisation
-        self.step_size = step_size
+        self.decay_rate = decay_rate
         self.min_update_size = min_update_size
         self.max_iterations = max_iterations
         self._need_weight_output = True
@@ -265,6 +265,10 @@ class OptimalTransportResampler(Module):
         return torch.where(torch.eq(diameter_x, 0.), 1., diameter_x)
 
     @staticmethod
+    def extent(x: Tensor):
+        return torch.amax(x, dim=(1,2)) - torch.amin(x, dim=(1,2))
+
+    @staticmethod
     def get_sinkhorn_inputs_OT(Nk, log_weight: Tensor, x_t: Tensor) -> Tuple[Tensor, Tensor, Tensor]:
         """
         Get the inputs to the Sinkhorn algorithm as used for OT resampling
@@ -296,14 +300,15 @@ class OptimalTransportResampler(Module):
         scale_x = OptimalTransportResampler.diameter(x_t).detach()
         scaled_x_t = centred_x_t / scale_x.unsqueeze(2)
         cost_matrix = torch.cdist(scaled_x_t, scaled_x_t, 2) ** 2
-        return log_uniform_weight, cost_matrix, scale_x
+        extent = OptimalTransportResampler.extent(scaled_x_t)
+        return log_uniform_weight, cost_matrix, extent
 
 
     def forward(self, state: Tensor, weight: Tensor, **data) -> WeightedSample:
         N = state.size(1)
-        log_b, cost, diam = self.get_sinkhorn_inputs_OT(N, weight, state)
-        f, g, epsilon_used = optimal_transport.sinkhorn_loop(weight, log_b, cost, self.regularisation, self.min_update_size, self.max_iterations, diam.reshape(-1, 1, 1), self.step_size)
-        transport = optimal_transport.get_transport_from_potentials(weight, log_b, cost, f, g, epsilon_used)
+        log_b, cost, extent = self.get_sinkhorn_inputs_OT(N, weight, state)
+        f, g, epsilon_used = optimal_transport.sinkhorn_loop(weight, log_b, cost, self.regularisation, self.min_update_size, self.max_iterations, extent.reshape(-1, 1, 1), self.decay_rate)
+        transport = optimal_transport.get_transport_from_potentials(weight, log_b, cost, f, g, self.regularisation)
         transport = self.gradient_wrapper.apply(transport)
         self.cache['used_weight'] = weight
         if self._need_weight_output:

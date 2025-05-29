@@ -86,9 +86,11 @@ def opt_potential(log_a: Tensor, c_potential: Tensor, cost: Tensor, epsilon: Ten
 
 
     """
-    temp = log_a.unsqueeze(2) + (c_potential.unsqueeze(2) - cost) / epsilon
-    temp = torch.logsumexp(temp, dim=1)
-    return -epsilon.squeeze(2) * temp
+    temp = log_a.unsqueeze(1) + (c_potential.unsqueeze(1) - cost) / epsilon
+    temp = torch.logsumexp(temp, dim=-1)
+    if isinstance(epsilon, Tensor):
+        return -epsilon.squeeze(2) * temp
+    return -epsilon * temp
 
 def sinkhorn_loop(log_a: Tensor, log_b: Tensor, cost: Tensor, epsilon: float, threshold: float, max_iter: int, diam: Tensor, rate: float) -> Tuple[Tensor, Tensor, Tensor]:
     """
@@ -132,10 +134,12 @@ def sinkhorn_loop(log_a: Tensor, log_b: Tensor, cost: Tensor, epsilon: float, th
     """
     device = log_a.device
     i = 1
-    f_i = torch.zeros_like(log_a, device=device)
-    g_i = torch.zeros_like(log_b, device=device)
+    epsilon_now = torch.clip(diam ** 2, min=epsilon).detach()
     cost_T = torch.transpose(cost, 1, 2)
-    epsilon_now = torch.clip(diam ** 2, min=epsilon)
+    f_i = opt_potential(log_b, torch.zeros_like(log_b, device=device), cost, epsilon_now)
+    g_i = opt_potential(log_a, torch.zeros_like(log_a, device=device), cost_T, epsilon_now)
+
+
     continue_criterion = torch.ones((f_i.size(0),), device=device, dtype=torch.bool).unsqueeze(1)
 
     def stop_criterion(i_, continue_criterion_):
@@ -144,8 +148,8 @@ def sinkhorn_loop(log_a: Tensor, log_b: Tensor, cost: Tensor, epsilon: float, th
     #Point convergence, the gradient due to the last step can be substituted for the gradient of the whole loop.
     with torch.no_grad():
         while stop_criterion(i, continue_criterion):
-            f_u = torch.where(continue_criterion, (f_i + opt_potential(log_b, g_i, cost_T, epsilon_now)) / 2, f_i)
-            g_u = torch.where(continue_criterion, (g_i + opt_potential(log_a, f_i, cost, epsilon_now)) / 2, g_i)
+            f_u = torch.where(continue_criterion, (f_i + opt_potential(log_b, g_i, cost, epsilon_now)) / 2, f_i)
+            g_u = torch.where(continue_criterion, (g_i + opt_potential(log_a, f_i, cost_T, epsilon_now)) / 2, g_i)
             update_size = torch.maximum(torch.abs(f_u - f_i), torch.abs(g_u - g_i))
             update_size = torch.max(update_size, dim=1)[0]
             continue_criterion = torch.logical_or(update_size > threshold, epsilon_now.squeeze() > epsilon).unsqueeze(1)
@@ -155,7 +159,6 @@ def sinkhorn_loop(log_a: Tensor, log_b: Tensor, cost: Tensor, epsilon: float, th
             i += 1
     f_i = f_i.clone().detach()
     g_i = g_i.clone().detach()
-    epsilon_now = epsilon_now.clone().detach()
-    f = opt_potential(log_b, g_i, cost_T, epsilon_now)
-    g = opt_potential(log_a, f_i, cost, epsilon_now)
+    f = opt_potential(log_b, g_i, cost_T, epsilon)
+    g = opt_potential(log_a, f_i, cost, epsilon)
     return f, g, epsilon_now

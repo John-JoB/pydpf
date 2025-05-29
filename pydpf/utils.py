@@ -2,7 +2,7 @@ import torch
 from typing import Tuple, Callable
 from types import FunctionType
 from functools import update_wrapper
-
+import os
 from warnings import warn
 from torch import Tensor
 
@@ -172,3 +172,39 @@ class doc_function:
 
 def MSE(prediction: Tensor, ground_truth: Tensor):
     return torch.sum(torch.mean((prediction - ground_truth) ** 2, dim=(0,1)))
+
+_deterministic_mode = False
+
+def is_deterministic_mode_enabled():
+    return _deterministic_mode
+
+class set_deterministic_mode():
+    def __init__(self, mode:bool, warn_only:bool):
+        self.prev = is_deterministic_mode_enabled()
+        self.mode = mode
+        self.warn_only = warn_only
+        if mode == True:
+            warn('Deterministic mode enabled, this will increase runtime and memory costs and should only be used when reproduciblity is required, reproducibility is only guarenteed on a static hardware and software setup.')
+
+
+    def set_mode(self):
+        os.putenv("CUBLAS_WORKSPACE_CONFIG", ':4096:8')
+        torch.use_deterministic_algorithms(True, warn_only=self.warn_only)
+        _deterministic_mode = True
+
+    def unset_mode(self):
+        os.unsetenv("CUBLAS_WORKSPACE_CONFIG")
+        torch.use_deterministic_algorithms(False)
+        _deterministic_mode = False
+
+    def __enter__(self):
+        if self.prev and (not self.mode):
+            self.unset_mode()
+        if (not self.prev) and self.mode:
+            self.set_mode()
+
+    def __exit__(self, *args):
+        if self.prev:
+            self.set_mode()
+        else:
+            self.unset_mode()

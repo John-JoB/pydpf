@@ -19,6 +19,7 @@ def _get_split_amounts(split, data_length):
     return s
 
 
+
 def train(dpf,
           opt: torch.optim.Optimizer,
           dataset: torch.utils.data.Dataset,
@@ -84,6 +85,7 @@ def train(dpf,
                 total_size += state.size(1)
             validation_MSE= np.sum((np.array(validation_MSE))) / total_size
             validation_ELBO = np.sum((np.array(validation_ELBO))) / total_size
+
         if target=='MSE':
             if validation_MSE < best_eval:
                 best_eval = validation_MSE
@@ -109,3 +111,4 @@ def train(dpf,
     test_ELBO = np.sum((np.array(test_ELBO))) / total_size
     print('')
     print(f'test MSE: {test_MSE}, test ELBO: {test_ELBO}')
+    return test_MSE, test_ELBO

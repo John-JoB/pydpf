@@ -4,6 +4,7 @@ import pydpf
 import numpy as np
 from typing import Tuple
 from copy import deepcopy
+import time
 
 def bind_angle(angle):
     bound_angle = torch.remainder(angle, 2 * torch.pi)
@@ -86,6 +87,7 @@ def train(dpf,
             total_size += observation.size(1)
         print(f'Auto_encoder training loss = {train_loss / total_size}')
 
+    start_time = time.time()
 
 
 
@@ -113,21 +115,14 @@ def train(dpf,
 
             cos_loss = torch.mean((outputs['Mean Pose'][:,:,3] - torch.cos(state[:, :, 2]))**2)
             sin_loss = torch.mean((outputs['Mean Pose'][:,:,2] - torch.sin(state[:, :, 2]))**2)
-            angle_loss = (cos_loss + sin_loss - 1)/2
-
+            angle_loss = cos_loss + sin_loss
+            elbo_loss = outputs['ELBO'].mean()
             #print(torch.sum((outputs['Mean Pose'][:,:,:2] - state[:outputs['Mean Pose'].size(0),:,:2])**2, dim=-1))
             position_loss = torch.mean(torch.sum((outputs['Mean Pose'][:,:,:2] - state[:,:,:2])**2, dim=-1))
             #print(position_loss)
-            loss = scalings[0]*position_loss + scalings[1]*angle_loss + AE_loss*scalings[2]
+            loss = scalings[0]*position_loss + scalings[1]*angle_loss + AE_loss*scalings[2] #+ elbo_loss
             #print(outputs['Mean Pose'][:, 0])
             loss.backward()
-            #for n, param in dpf.named_parameters():
-            #    print(n)
-            #    if param.requires_grad and not param.grad is None:
-            #        print(torch.sum(param.grad**2))
-            #    else:
-            #        print(f'No grad - {param.requires_grad}')
-
             train_loss.append(loss.item()*state.size(1))
             opt.step()
             total_size += state.size(1)
@@ -185,4 +180,5 @@ def train(dpf,
     test_angle_MSE = np.sum((np.array(test_angle_MSE))) / total_size
     print('')
     print(f'test position RMSE: {np.sqrt(test_Pos_MSE)}, test angle RMSE: {np.sqrt(test_angle_MSE)}')
+    print(f'Final time = {start_time - time.time()}')
     return test_Pos_MSE, test_angle_MSE

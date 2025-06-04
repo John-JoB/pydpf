@@ -31,8 +31,7 @@ def create_observations(obs, generator):
             offsets = np.random.random_integers(0, 8, 2)
             new_o[i] = obs[i, offsets[0]:offsets[0] + 24, offsets[1]:offsets[1] + 24, :3]
     new_o = new_o.to(dtype=torch.float16)
-    random = torch.normal(0.0, 20.0, new_o.shape, dtype=torch.float16, generator=generator, device=obs.device)
-    new_o = torch.round(torch.clip(new_o + random, 0, 255)).to(dtype=torch.uint8)
+    new_o = torch.round(torch.clip(new_o, 0, 255)).to(dtype=torch.uint8)
     new_o = new_o.permute(0, 3, 1, 2)
     return new_o.flatten(start_dim=1)
 

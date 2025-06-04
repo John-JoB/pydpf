@@ -134,11 +134,9 @@ class ObservationEncoder(pydpf.Module):
             SeedableConv2D(32, 64, kernel_size=4, stride=2, padding=1, bias=False, generator = generator, device=generator.device),  # 64*3*3
             torch.nn.ReLU(True),
             torch.nn.BatchNorm2d(64),
-            #SeedableDropout2d(p=1 - dropout_keep_ratio, generator=generator),
             torch.nn.Flatten(),
             SeedableDropout(p=1 - dropout_keep_ratio, generator = generator),
             SeedableLinear(64 * 3 * 3, hidden_size, generator = generator, device=generator.device),
-            # torch.nn.ReLU(True)
         )
         return encode
 
@@ -166,7 +164,7 @@ class ObservationDecoder(pydpf.Module):
 class StateEncoder(pydpf.Module):
     def __new__(cls, hidden_size, dropout_keep_ratio = 0.7, generator = torch.default_generator):
         particle_encode = torch.nn.Sequential(
-            SeedableLinear(3, 16, generator = generator, device=generator.device),
+            SeedableLinear(4, 16, generator = generator, device=generator.device),
             torch.nn.ReLU(True),
             SeedableLinear(16, 32, generator = generator, device=generator.device),
             torch.nn.ReLU(True),
@@ -178,6 +176,53 @@ class StateEncoder(pydpf.Module):
         return particle_encode
 
 class RealNVP_cond(pydpf.Module):
+
+    def __init__(self, dim, hidden_dim=8, base_network=FCNN, condition_on_dim=None, generator = torch.default_generator, zero_i = False):
+        super().__init__()
+        self.dim = dim
+        self.condition_on_dim = condition_on_dim
+        self.t1 = base_network(dim // 2 + self.condition_on_dim, ceil(dim / 2), hidden_dim, generator)
+        self.t2 = base_network(ceil(dim / 2) + self.condition_on_dim, dim // 2, hidden_dim, generator)
+        self.generator = generator
+        if zero_i:
+            self.zero_initialization()
+
+    def zero_initialization(self, std=0.01):
+        for layer in self.t1.network:
+            if layer.__class__.__name__ == 'SeedableLinear':
+                torch.nn.init.normal_(layer.weight, std=std, generator=self.generator)
+                layer.bias.data.fill_(0)
+        for layer in self.t2.network:
+            if layer.__class__.__name__ == 'SeedableLinear':
+                torch.nn.init.normal_(layer.weight, std=std, generator=self.generator)
+                layer.bias.data.fill_(0)
+
+    def forward(self, x, condition_on):
+        lower, upper = x[..., :self.dim // 2], x[..., self.dim // 2:]
+        lower_extended = torch.cat([lower, condition_on], dim=-1)
+        t1_transformed = self.t1(lower_extended)
+        upper = t1_transformed + upper
+        upper_extended = torch.cat([upper, condition_on], dim=-1)
+        t2_transformed = self.t2(upper_extended)
+        lower = t2_transformed + lower
+        z = torch.cat([lower, upper], dim=-1)
+        return z, 0
+
+    def inverse(self, z, condition_on):
+        lower, upper = z[..., :self.dim // 2], z[..., self.dim // 2:]
+
+        upper_extended = torch.cat([upper, condition_on], dim=-1)
+        t2_transformed = self.t2(upper_extended)
+        lower = lower - t2_transformed
+        lower_extended = torch.cat([lower, condition_on], dim=-1)
+        t1_transformed = self.t1(lower_extended)
+        upper = upper - t1_transformed
+        x = torch.cat([lower, upper], dim=-1)
+        log_det = 0
+        return x, log_det
+
+
+class RealNVP_cond_(pydpf.Module):
 
     def __init__(self, dim, hidden_dim=8, base_network=FCNN, condition_on_dim=None, generator = torch.default_generator, zero_i = False):
         super().__init__()
@@ -257,7 +302,6 @@ class RealNVP_cond(pydpf.Module):
         log_det = torch.sum(-s1_transformed, dim=-1) + torch.sum(-s2_transformed, dim=-1)
         return x, log_det
 
-
 class NormalizingFlowModel_cond(pydpf.Module):
 
     def __init__(self, prior, flows, device='cuda:0'):
@@ -286,6 +330,7 @@ class NormalizingFlowModel_cond(pydpf.Module):
     def log_density(self, x, condition_on):
         z, log_det = self.forward(x, condition_on)
         prior_prob = self.prior.log_density(z)
+
         return prior_prob + log_det
 
     def sample(self, sample_size, condition_on):

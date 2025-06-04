@@ -43,16 +43,22 @@ class MazeDynamic(pydpf.Module):
         return self.dist.log_density(state - self.deteriministic_action(prev_state, control))
 
 class MazeObservation(pydpf.Module):
-    def __init__(self, flow_model, encoder, decoder, state_encoder):
+
+
+
+    def __init__(self, flow_model, encoder, decoder, state_encoder, device=torch.device('cpu')):
         super().__init__()
         self.flow_model = flow_model
         self.encoder = encoder
+        self.scaling_tensor = torch.tensor([[[1., 1., torch.pi]]], device=device)
         self.decoder = decoder
         self.state_encoder = state_encoder
 
-    def score(self, state, observation, **data):
+    def score(self, state, observation, t, **data):
         b, n , _ = state.shape
-        encoded_state = self.state_encoder(state)
+        c = torch.cos(state[:, :, 2:3])
+        s = torch.sin(state[:, :, 2:3])
+        encoded_state = self.state_encoder(torch.concat([state[:, :, :2], c, s], dim=-1))
         return self.flow_model.log_density(observation.unsqueeze(1).expand(-1, n, -1), encoded_state)
 
 class SimpleMazeObservation(pydpf.Module):

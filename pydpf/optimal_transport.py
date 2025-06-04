@@ -159,6 +159,6 @@ def sinkhorn_loop(log_a: Tensor, log_b: Tensor, cost: Tensor, epsilon: float, th
             i += 1
     f_i = f_i.clone().detach()
     g_i = g_i.clone().detach()
-    f = opt_potential(log_b, g_i, cost_T, epsilon)
-    g = opt_potential(log_a, f_i, cost, epsilon)
+    f = opt_potential(log_b, g_i, cost, epsilon)
+    g = opt_potential(log_a, f_i, cost_T, epsilon)
     return f, g, epsilon_now

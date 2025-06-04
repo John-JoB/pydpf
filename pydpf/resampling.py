@@ -15,6 +15,7 @@ from pydpf.utils import batched_select, normalise
 from pydpf.base import Module, cached_property
 from pydpf.custom_types import WeightedSample
 from pydpf import optimal_transport
+from math import sqrt
 
 class MultinomialResampler(Module):
 
@@ -297,7 +298,7 @@ class OptimalTransportResampler(Module):
         """
         log_uniform_weight = torch.log(torch.ones((log_weight.size(0), Nk), device=log_weight.device) / Nk)
         centred_x_t = x_t - torch.mean(x_t, dim=1, keepdim=True).detach()
-        scale_x = OptimalTransportResampler.diameter(x_t).detach()
+        scale_x = OptimalTransportResampler.diameter(x_t).detach() * sqrt(x_t.size(-1))
         scaled_x_t = centred_x_t / scale_x.unsqueeze(2)
         cost_matrix = torch.cdist(scaled_x_t, scaled_x_t, 2) ** 2
         extent = OptimalTransportResampler.extent(scaled_x_t)

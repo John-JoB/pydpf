@@ -154,7 +154,7 @@ class SIS(Module):
                 time_data = self._get_time_data(t, observation = observation, control = control, time = time, series_metadata = series_metadata)
                 prev_state = state
                 prev_weight = weight
-                state, weight, likelihood = self.proposal(prev_state = state, prev_weight = weight, **time_data)
+                state, weight, likelihood = self.proposal(prev_state = prev_state, prev_weight = prev_weight, **time_data)
                 likelihood = likelihood - log_N
                 if not gradient_regulariser is None:
                     state, weight = gradient_regulariser.apply( state, weight, prev_state, prev_weight)
@@ -384,12 +384,12 @@ class MarginalParticleFilter(SIS):
         else:
             def prop(prev_state, prev_weight, observation, **data):
                 resampled_state, resampled_weight = self.resampler(prev_state, prev_weight, **data)
-                state = detach_full(self.SSM.proposal_model.sample(prev_state=resampled_state, **data))
+                state = detach_full(self.SSM.proposal_model.sample(prev_state=resampled_state, observation=observation, **data))
                 used_weight = self.resampler.cache['used_weight']
                 expanded_prev_state = prev_state.unsqueeze(1).expand(-1, state.size(1), -1, -1).flatten(1, 2)
                 expanded_state = state.unsqueeze(2).expand(-1, -1, state.size(1), -1).flatten(1, 2)
                 dynamic_log_density = self.SSM.dynamic_model.log_density(state=expanded_state, prev_state=expanded_prev_state, **data).reshape(state.size(0), state.size(1), state.size(1))
-                proposal_log_density = self.SSM.proposal_model.log_density(state=expanded_state, prev_state=expanded_prev_state, **data).reshape(state.size(0), state.size(1), state.size(1))
+                proposal_log_density = self.SSM.proposal_model.log_density(state=expanded_state, prev_state=expanded_prev_state, observation=observation, **data).reshape(state.size(0), state.size(1), state.size(1))
                 weight = (torch.logsumexp(prev_weight.unsqueeze(1) + dynamic_log_density, dim=-1)
                           - detach_full(torch.logsumexp(used_weight.unsqueeze(1) + proposal_log_density, dim=-1))
                           + self.SSM.observation_model.score(state=state, observation=observation, **data))
@@ -619,7 +619,7 @@ class OptimalTransportDPF(ParticleFilter):
     """
     def __init__(self, SSM: FilteringModel = None,
                  regularisation: float = 0.1,
-                 step_size: float = 0.9,
+                 decay_rate: float = 0.9,
                  min_update_size: float = 0.01,
                  max_iterations: int = 100,
                  transport_gradient_clip: float = 1.,
@@ -649,7 +649,7 @@ class OptimalTransportDPF(ParticleFilter):
         transport_gradient_clip: float
             The maximum per-element gradient of the transport matrix that should be passed. Higher valued gradients will be clipped to this value.
         """
-        super().__init__(OptimalTransportResampler(regularisation, step_size, min_update_size, max_iterations, transport_gradient_clip), SSM)
+        super().__init__(OptimalTransportResampler(regularisation, decay_rate, min_update_size, max_iterations, transport_gradient_clip), SSM)
 
 class StopGradientDPF(ParticleFilter):
     """
@@ -707,10 +707,10 @@ class MarginalStopGradientDPF(MarginalParticleFilter):
         and dynamic models. This is because a partially reparameterised estimator exists for the bootstrap case but not with a generic proposal. If SSM has a non-null proposal
         then this algorithm is exactly equivalent to the REINFORCEDPF.
         """
-        if multinomial:
-            super().__init__(MultinomialResampler(resampling_generator), SSM, 'partial')
-            return
-        super().__init__(SystematicResampler(resampling_generator), SSM, 'partial')
+        resampler = MultinomialResampler(resampling_generator) if multinomial else SystematicResampler(resampling_generator)
+        reinforce_method = 'none' if SSM.has_proposal else 'partial'
+        super().__init__(resampler, SSM, reinforce_method)
+
 
 class KernelDPF(ParticleFilter):
 

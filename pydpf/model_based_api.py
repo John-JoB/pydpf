@@ -86,6 +86,18 @@ class FilteringModel(Module):
             if not hasattr(self.initial_proposal_model, 'log_density'):
                 raise AttributeError("The initial proposal model must implement a 'log_density' method")
 
+    @property
+    def is_bootstrap(self):
+        return self.proposal_model is None and self.initial_proposal_model is None
+
+    @property
+    def has_proposal(self):
+        return self.proposal_model is not None
+
+    @property
+    def has_initial_proposal(self):
+        return self.initial_proposal_model is not None
+
     def get_prior_IS(self):
         if self.initial_proposal_model is None:
             def prior(n_particles, observation, **data):

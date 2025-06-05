@@ -7,14 +7,14 @@ version = '1.0.0'
 release = '1.0.0'
 extensions = ['numpydoc', 'autodoc']
 master_doc = 'modules'
-sys.modules['torch'] = MagicMock()
-sys.modules['torch.utils'] = MagicMock()
-sys.modules['torch.utils.data'] = MagicMock()
-sys.modules['torch.nn'] = MagicMock()
-sys.modules['numpy'] = MagicMock()
-sys.modules['pandas'] = MagicMock()
-sys.modules['polars'] = MagicMock()
-sys.modules['joblib'] = MagicMock()
+#sys.modules['torch'] = MagicMock()
+#sys.modules['torch.utils'] = MagicMock()
+#sys.modules['torch.utils.data'] = MagicMock()
+#sys.modules['torch.nn'] = MagicMock()
+#sys.modules['numpy'] = MagicMock()
+#sys.modules['pandas'] = MagicMock()
+#sys.modules['polars'] = MagicMock()
+#sys.modules['joblib'] = MagicMock()
 
 sys.path.insert(0, os.path.abspath('../../pydpf/'))
 sys.path.append(os.path.abspath('../..'))

@@ -7,6 +7,7 @@ version = '1.0.0'
 release = '1.0.0'
 extensions = ['numpydoc', 'autodoc']
 master_doc = 'modules'
+numpydoc_show_class_members = False
 #sys.modules['torch'] = MagicMock()
 #sys.modules['torch.utils'] = MagicMock()
 #sys.modules['torch.utils.data'] = MagicMock()

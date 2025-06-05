@@ -10,6 +10,7 @@ master_doc = 'modules'
 sys.modules['torch'] = MagicMock()
 sys.modules['torch.utils'] = MagicMock()
 sys.modules['torch.utils.data'] = MagicMock()
+sys.modules['torch.nn'] = MagicMock()
 sys.modules['numpy'] = MagicMock()
 sys.modules['pandas'] = MagicMock()
 sys.modules['polars'] = MagicMock()

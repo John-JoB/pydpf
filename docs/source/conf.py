@@ -1,6 +1,7 @@
 import sys
 import os
 from unittest.mock import MagicMock
+import torch
 project = 'pydpf'
 author = 'John-Joseph Brady'
 version = '1.0.0'
@@ -10,5 +11,6 @@ master_doc = 'modules'
 sys.modules['torch'] = MagicMock()
 sys.modules['pandas'] = MagicMock()
 sys.modules['polars'] = MagicMock()
+
 sys.path.insert(0, os.path.abspath('../../pydpf/'))
 sys.path.append(os.path.abspath('../..'))

@@ -1,14 +1,15 @@
 import sys
 import os
 from unittest.mock import MagicMock
-import torch
 project = 'pydpf'
 author = 'John-Joseph Brady'
 version = '1.0.0'
 release = '1.0.0'
 extensions = ['numpydoc', 'autodoc']
 master_doc = 'modules'
+print(sys.modules.keys())
 sys.modules['torch'] = MagicMock()
+sys.modules['numpy'] = MagicMock()
 sys.modules['pandas'] = MagicMock()
 sys.modules['polars'] = MagicMock()
 

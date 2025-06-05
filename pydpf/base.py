@@ -15,7 +15,7 @@ class DivergenceError(Exception):
     pass
 
 
-class Module(TorchModule, metaclass=ABCMeta):
+class Module(TorchModule):
     """
     Base class for all modules in pydpf.
     Includes an update method that should be called after a gradient update to update quantities derived from parameters.

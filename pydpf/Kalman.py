@@ -85,7 +85,7 @@ class KalmanFilter(Module):
         posterior_covariances: Tensor
             The covariances of the Gaussian filtering posteriors.
         likelihood_factors: Tensor
-            The likelihood factors of the Gaussian filtering posteriors. Equal to :math:`p(y_{t}\mid y_{0:t-1}).
+            The likelihood factors of the Gaussian filtering posteriors. Equal to :math:`p(y_{t}\mid y_{0:t-1})`.
         """
         prior_mean = self.prior_model.mean
         prior_covariance = self.prior_model.cholesky_covariance @ self.prior_model.cholesky_covariance.T

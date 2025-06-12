@@ -71,8 +71,8 @@ def ESS_Condition(threshold):
     Notes
     -----
     The relative ESS is equal to:
-    .. math::
-        \frac{1}{K\sum^{K}_{k=1}(w^{(k)}_{t})^{2}}
+
+    .. math:: \frac{1}{K\sum^{K}_{k=1}(w^{(k)}_{t})^{2}}
 
     See [1]_.
 

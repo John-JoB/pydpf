@@ -98,8 +98,7 @@ class constrained_parameter:
     ``constrained_parameters`` can be applied to any parameter accessible from a ``Module`` including as attributes of a child ``Module``.
     This is safe as the parameter is changed in-place.
 
-    .. warning::  ``@constrained_parameter`` should be used to impose constraints only, the underlying data is modified inplace and without gradient. ``@constrained_parameter``
-    should always act directly on the underlying parameter, they cannot be stacked or used to constrain functions of parameters.
+    .. warning::  ``@constrained_parameter`` should be used to impose constraints only, the underlying data is modified inplace and without gradient. ``@constrained_parameter`` should always act directly on the underlying parameter, they cannot be stacked or used to constrain functions of parameters.
     """
 
     def __init__(self, function: Callable[[Module], Tuple[Tensor, Tensor]]):
@@ -140,8 +139,7 @@ class cached_property:
     The cached_property is calculated lazily; when it is first accessed it is calculated and cached.
     Calling Module.update() resets the value so that it will be recomputed on next access.
 
-    .. warning:: PyTorch generally expects the gradient graph to be created on each forward pass, and destroys it on backwards passes.
-    Therefore, it is recommended to  call ``.update()`` on the top level ``Module`` whenever running a script with gradient tracking even if it is known that the parameters have not changed.
+    .. warning:: PyTorch generally expects the gradient graph to be created on each forward pass, and destroys it on backwards passes. Therefore, it is recommended to  call ``.update()`` on the top level ``Module`` whenever running a script with gradient tracking even if it is known that the parameters have not changed.
     """
     def __init__(self, function: Callable):
         self.function = function

@@ -5,6 +5,7 @@ from ..base import Module, constrained_parameter, cached_property
 from typing import Tuple, Union, Callable
 from ..utils import doc_function
 from warnings import warn
+from typing import Callable
 
 class MultivariateGaussian(Distribution):
     """An unconditional multivariate Gaussian distribution.
@@ -246,9 +247,9 @@ class ConditionalGaussian(Distribution):
 
         Parameters
         ----------
-        mean: callable|Tensor
+        mean: Callable|Tensor
             The means or a function to calculate them
-        cholesky_covariance: callable|Tensor
+        cholesky_covariance: Callable|Tensor
             The lower cholesky decomposition of the covariance, or a function to calculate it.
         force_diagonal_cov: bool
             Whether to force the covariance matrix to be diagonal or not.
@@ -260,8 +261,8 @@ class ConditionalGaussian(Distribution):
             The generator to control the rng when sampling.
         """
 
-    def __new__(cls, mean: callable|Tensor,
-                cholesky_covariance: callable|Tensor,
+    def __new__(cls, mean: Callable|Tensor,
+                cholesky_covariance: Callable|Tensor,
                 force_diagonal_cov: bool = False,
                 dim: Union[int, None] = None,
                 device: torch.device|None = None,

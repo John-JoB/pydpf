@@ -13,17 +13,17 @@ from math import sqrt, log
 
 
 class MultinomialResampler(Module):
+    """Multinomial resampler.
 
+        Resamples particles from the multinomial distribution. With
+
+        Parameters
+        ----------
+        generator: torch.Generator
+            The generator to track the random state of the resampling process.
+    """
     def __init__(self, generator:torch.Generator):
-        """Multinomial resampler.
 
-            Resamples particles from the multinomial distribution. With
-
-            Parameters
-            ----------
-            generator: torch.Generator
-                The generator to track the random state of the resampling process.
-        """
 
         super().__init__()
         self.cache = {}
@@ -31,6 +31,7 @@ class MultinomialResampler(Module):
         self._need_weight_output = True
 
     def forward(self, state:Tensor, weight:Tensor, **data):
+        """Run the multinomial resampler."""
         with torch.no_grad():
             sampled_indices = torch.multinomial(torch.exp(weight), weight.size(1), replacement=True, generator=self.generator).detach()
             self.cache['used_weight'] = weight
@@ -70,6 +71,7 @@ class SystematicResampler(Module):
         self._need_weight_output = True
 
     def forward(self, state:Tensor, weight:Tensor, **data):
+        """Run the systematic resampler."""
         with torch.no_grad():
             offset = torch.rand((weight.size(0),), device=state.device, generator=self.generator)
             cum_probs = torch.cumsum(torch.exp(weight), dim=1)
@@ -137,6 +139,7 @@ class SoftResampler(Module):
         self._need_weight_output = True
 
     def forward(self, state:Tensor, weight:Tensor, **data):
+        """Run the soft-resampler"""
         log_n = torch.log(torch.tensor(weight.size(1), device=state.device))
         soft_weight = torch.logaddexp(weight + self.log_softness, self.neg_log_softness - log_n)
         state, output_weights = self.resampler(state, soft_weight)
@@ -175,6 +178,7 @@ class StopGradientResampler(Module):
         self._need_weight_output = True
 
     def forward(self, state:Tensor, weight:Tensor, **data):
+        """Run the stop-gradient resampler"""
 
         if self._need_weight_output and torch.is_grad_enabled():
             self.base_resampler._need_weight_output = False
@@ -319,6 +323,7 @@ class OptimalTransportResampler(Module):
 
 
     def forward(self, state: Tensor, weight: Tensor, **data):
+        """Run the optimal transport resampler."""
         N = state.size(1)
         log_b, cost, extent = self.get_sinkhorn_inputs_OT(N, weight, state)
         f, g, epsilon_used = optimal_transport.sinkhorn_loop(weight, log_b, cost, self.regularisation, self.min_update_size, self.max_iterations, extent.reshape(-1, 1, 1), self.decay_rate)
@@ -359,8 +364,10 @@ class KernelResampler(Module):
         self._need_weight_output = True
 
     def forward(self, state: Tensor, weight: Tensor, **data):
-        new_state = self.mixture.sample(state, weight, sample_size=(state.size(1),))
-        self.cache = self.mixture.resampler.cache
+        """Run the kernel transport resampler."""
+        with torch.no_grad:
+            new_state = self.mixture.sample(state, weight, sample_size=(state.size(1),))
+            self.cache = self.mixture.resampler.cache
         # Save computation if gradient is not required
         if torch.is_grad_enabled() and self._need_weight_output:
             density = self.mixture.log_density(new_state, state, weight)

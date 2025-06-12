@@ -7,31 +7,28 @@ from ..utils import doc_function
 from warnings import warn
 
 class MultivariateGaussian(Distribution):
+    """An unconditional multivariate Gaussian distribution.
+
+        Parameters
+        ----------
+        mean: Tensor
+            1D tensor specifying the mean.
+        cholesky_covariance: Tensor
+            2D tensor specifying the (lower) Cholesky decomposition of the covariance matrix. If the upper triangular section has non-zero
+            values these will be ignored.
+        diagonal_cov: bool
+            Whether to constrain the covariance to be diagonal. Default is False.
+        generator : Union[torch.Generator, None]
+            The generator to control the rng when sampling kernels from the mixture.
+    """
     conditional = False
 
-    half_log_2pi = (1/2) * torch.log(torch.tensor(2*torch.pi))
+    _half_log2pi = (1/2) * torch.log(torch.tensor(2*torch.pi))
 
-    def __init__(self, mean: Tensor, cholesky_covariance: Tensor, diagonal_cov:bool = False, gradient_estimator: str = 'reparameterisation', generator: Union[None, torch.Generator] = None) -> None:
-        """
-            A multivariate Gaussian distribution.
+    def __init__(self, mean: Tensor, cholesky_covariance: Tensor, diagonal_cov:bool = False, generator: Union[None, torch.Generator] = None) -> None:
 
-            Parameters
-            ----------
-            mean: Tensor
-                1D tensor specifying the mean.
-            cholesky_covariance: Tensor
-                2D tensor specifying the (lower) Cholesky decomposition of the covariance matrix. If the upper triangular section has non-zero
-                values these will be ignored.
-            diagonal_cov: bool
-                Whether to constrain the covariance to be diagonal. Default is False.
-            gradient_estimator : str
-                The gradient estimator to use, one of 'reparameterisation', 'score' or 'none'. Default is 'reparameterisation'.
-            generator : Union[torch.Generator, None]
-                The generator to control the rng when sampling kernels from the mixture.
-        """
 
-        super().__init__(gradient_estimator, generator)
-        self.reparameterisable = True
+        super().__init__(generator)
         self.mean = mean
         self.cholesky_covariance_ = cholesky_covariance
         self.diagonal_cov = diagonal_cov
@@ -56,10 +53,22 @@ class MultivariateGaussian(Distribution):
         return torch.linalg.inv_ex(self.cholesky_covariance)[0]
 
     @cached_property
-    def half_log_det_cov(self):
+    def half_logdet_cov(self):
         return torch.linalg.slogdet(self.cholesky_covariance)[1]
 
-    def _sample(self, sample_size: Union[Tuple[int, ...], None] = None) -> Tensor:
+    def sample(self, sample_size: tuple[int,...]|None = None) -> Tensor:
+        """Sample a Multivariate Gaussian distribution.
+
+        Parameters
+        ----------
+        sample_size: tuple[int,...]|None
+            The size of the sample to draw. Draw a single sample without a sample dimension if None.
+
+        Returns
+        -------
+        sample: Tensor
+            A multivariate Gaussian sample.
+        """
         if sample_size is None:
             true_sample_size = self.mean.size()
         else:
@@ -68,27 +77,8 @@ class MultivariateGaussian(Distribution):
         output = self.mean + output @ self.cholesky_covariance.T
         return output
 
-
-    @doc_function
-    def sample(self, sample_size: Union[Tuple[int, ...], None] = None) -> Tensor:
-        """
-        Sample a Multivariate Gaussian distribution.
-
-        Parameters
-        ----------
-        sample_size: Union[Tuple[int, ...], None]
-            The size of the sample to draw. Draw a single sample without a sample dimension if None.
-
-        Returns
-        -------
-        sample: Tensor
-            A multivariate Gaussian sample.
-        """
-        pass
-
     def log_density(self, sample: Tensor) -> Tensor:
-        """
-        Returns the log density of a sample
+        """Returns the log density of a sample
 
         Parameters
         ----------
@@ -101,15 +91,30 @@ class MultivariateGaussian(Distribution):
             The log density of each datum in the sample.
         """
         self.check_sample(sample)
-        prefactor = -sample.size(-1) * MultivariateGaussian.half_log_2pi - self.half_log_det_cov
+        prefactor = -sample.size(-1) * MultivariateGaussian._half_log2pi - self.half_log_det_cov
         residuals = sample - self.mean
         exponent = (-1/2) * torch.sum((residuals @ self.inv_cholesky_cov.T)**2, dim=-1)
         return prefactor + exponent
 
 
 class StandardGaussian(Distribution):
-    def __new__(cls, dim, generator, *args, **kwargs):
-        return MultivariateGaussian(torch.zeros(dim, device = generator.device), cholesky_covariance=torch.eye(dim, device = generator.device), generator=generator)
+    """The Multivariate Gaussian distribution with zero mean and diagonal unit covariance. With no learnable parameters.
+
+    Parameters
+    ----------
+    dim: int
+        The dimension of the distribution.
+    generator: torch.Generator
+        The generator to control the RNG when sampling from this distribution.
+    """
+    def __new__(cls, dim: int, generator: torch.Generator, learn_mean = False, learn_cov = False, *args, **kwargs):
+        cov = torch.eye(dim, device = generator.device)
+        mean = torch.zeros(dim, device = generator.device)
+        if learn_mean:
+            mean = torch.nn.Parameter(mean)
+        if learn_cov:
+            cov = torch.nn.Parameter(cov)
+        return MultivariateGaussian(mean=mean, cholesky_covariance=cov, generator=generator)
 
 class _ConstCovGaussian(Distribution):
 
@@ -119,22 +124,21 @@ class _ConstCovGaussian(Distribution):
         if condition_on.device != self.device:
             raise ValueError(f'condition_on should be on the same device as the distribution parameters, found {condition_on} and {self.device}.')
 
-    def __init__(self, mean: Callable[[Tensor], Tensor], cholesky_covariance: Tensor, diagonal_cov, gradient_estimator: str = 'reparameterisation', generator: Union[None, torch.Generator] = None) -> None:
-        super().__init__(gradient_estimator, generator)
+    def __init__(self, mean: Callable[[Tensor], Tensor], cholesky_covariance: Tensor, diagonal_cov, generator: torch.Generator) -> None:
+        super().__init__(generator)
         self.mean_fun = mean
         self.dim = cholesky_covariance.size(0)
-        self.reparameterisable = True
-        self.dist = MultivariateGaussian(torch.zeros((self.dim,), device=self.device), cholesky_covariance, diagonal_cov, gradient_estimator, generator)
+        self.dist = MultivariateGaussian(torch.zeros((self.dim,), device=self.device), cholesky_covariance, diagonal_cov, generator)
         self.device = cholesky_covariance.device
 
-    def _sample(self, condition_on: Tensor, sample_size: Union[Tuple[int, ...], None] = None) -> Tensor:
+    def sample(self, condition_on: Tensor, sample_size: tuple[int,...]|None = None) -> Tensor:
         self._check_conditions(condition_on)
         means = self.mean_fun(condition_on)
         batch_size = self.get_batch_size(means.size(), 1)
         if sample_size is None:
-            sample = self.dist._sample(sample_size=batch_size)
+            sample = self.dist.sample(sample_size=batch_size)
         else:
-            sample = self.dist._sample(sample_size=(*batch_size, *sample_size))
+            sample = self.dist.sample(sample_size=(*batch_size, *sample_size))
         return sample + self._unsqueeze_to_size(means, sample)
 
     def log_density(self, sample: Tensor, condition_on: Tensor) -> Tensor:
@@ -156,19 +160,17 @@ class _GeneralCovGaussian(Distribution):
     def __init__(self,
                 mean: Callable[[Tensor], Tensor],
                 cholesky_covariance: Callable[[Tensor], Tensor],
-                gradient_estimator: str = 'reparameterisation',
                 force_diagonal_cov: bool = False,
                 dim: Union[int, None] = None,
                 device: Union[torch.device, None] = None,
                 generator: Union[torch.Generator, None] = None
                 ):
 
-        super().__init__(gradient_estimator, generator)
+        super().__init__(generator)
         self.mean_fun = mean
         self.cov_fun = cholesky_covariance
         self.dim = dim
-        self.reparameterisable = True
-        self.dist = MultivariateGaussian(torch.zeros((self.dim,), device=self.device), torch.eye(self.dim), True, gradient_estimator, generator)
+        self.dist = MultivariateGaussian(torch.zeros((self.dim,), device=self.device), torch.eye(self.dim), True, generator)
         self.device = device
         self.force_diagonal = force_diagonal_cov
 
@@ -177,7 +179,7 @@ class _GeneralCovGaussian(Distribution):
         tril = torch.tril(cov, diagonal=-1)
         return diagonal + tril
 
-    def _sample(self, condition_on: Tensor, sample_size: Union[Tuple[int, ...], None] = None) -> Tensor:
+    def sample(self, condition_on: Tensor, sample_size: tuple[int,...]|None = None) -> Tensor:
         self._check_conditions(condition_on)
         means = self.mean_fun(condition_on)
         cov = self.cov_fun(condition_on)
@@ -225,48 +227,7 @@ class _GeneralCovGaussian(Distribution):
 
 
 class ConditionalGaussian(Distribution):
-    """
-        Class to dispatch to different Gaussian implementations.
-    """
-
-    def __new__(cls, mean: Union[Callable[[Tensor], Tensor], Tensor],
-                cholesky_covariance: Union[Callable[[Tensor], Tensor], Tensor],
-                force_diagonal_cov: bool = False,
-                dim: Union[int, None] = None,
-                device: Union[torch.device, None] = None,
-                gradient_estimator: str = 'reparameterisation',
-                generator: Union[torch.Generator, None] = None,
-                ) -> Distribution:
-
-        if isinstance(mean, Tensor) and isinstance(cholesky_covariance, Tensor):
-            warn('Using the conditional API to create a non-conditional distribution, are you sure this is correct?')
-            return MultivariateGaussian(mean, cholesky_covariance, force_diagonal_cov, gradient_estimator, generator)
-
-        if isinstance(cholesky_covariance, Tensor):
-            return _ConstCovGaussian(mean, cholesky_covariance, force_diagonal_cov, gradient_estimator, generator)
-
-        if isinstance(mean, Tensor):
-            return _GeneralCovGaussian(lambda t: mean, cholesky_covariance, force_diagonal_cov, mean.size(-1), mean.device, gradient_estimator, generator)
-
-        if dim is None:
-            raise ValueError('Dimension must be specified if both the mean and the covariance are functions')
-        if device is None:
-            raise ValueError('Dimension must be specified if both the mean and the covariance are functions')
-
-        return _GeneralCovGaussian(mean, cholesky_covariance, force_diagonal_cov, dim, device, gradient_estimator, generator)
-
-
-    @doc_function
-    def __init__(self, mean: Union[Callable[[Tensor], Tensor], Tensor],
-                cholesky_covariance: Union[Callable[[Tensor], Tensor], Tensor],
-                force_diagonal_cov: bool = False,
-                dim: Union[int, None] = None,
-                device: Union[torch.device, None] = None,
-                gradient_estimator: str = 'reparameterisation',
-                generator: Union[torch.Generator, None] = None,
-                ):
-        """
-        A general conditional Gaussian distribution, where the mean and covariance can be given as arbitrary functions of some conditioning tensor.
+    """A general conditional Gaussian distribution, where the mean and covariance can be given as arbitrary functions of some conditioning tensor.
 
         Both the mean and cholesky_covariance can be either a Tensor or a function from a Tensor to a Tensor.
 
@@ -285,26 +246,60 @@ class ConditionalGaussian(Distribution):
 
         Parameters
         ----------
-        mean: Union[Callable[[Tensor], Tensor], Tensor]
+        mean: callable|Tensor
             The means or a function to calculate them
-        cholesky_covariance: Union[Callable[[Tensor], Tensor], Tensor]
+        cholesky_covariance: callable|Tensor
             The lower cholesky decomposition of the covariance, or a function to calculate it.
         force_diagonal_cov: bool
             Whether to force the covariance matrix to be diagonal or not.
-        dim: Union[int, None]
+        dim: int|None
             If both the mean and the covariance are given as functions, then the dimension of the distribution must be provided, otherwise it is inferred from the constant parameters.
-        device : Union[torch.device, None]
+        device : torch.device|None
             If both the mean and the covariance are given as functions, then the device of the distribution must be provided, otherwise it is inferred from the constant parameters.
-        gradient_estimator : str
-                The gradient estimator to use, one of 'reparameterisation', 'score' or 'none'.
-        generator : Union[torch.Generator, None]
-            The generator to control the rng when sampling kernels from the mixture.
+        generator : torch.Generator
+            The generator to control the rng when sampling.
         """
 
-        super().__init__(gradient_estimator, generator)
+    def __new__(cls, mean: callable|Tensor,
+                cholesky_covariance: callable|Tensor,
+                force_diagonal_cov: bool = False,
+                dim: Union[int, None] = None,
+                device: torch.device|None = None,
+                generator: torch.Generator = torch.default_generator
+                ) -> Distribution:
+
+        if isinstance(mean, Tensor) and isinstance(cholesky_covariance, Tensor):
+            warn('Using the conditional API to create a non-conditional distribution, are you sure this is correct?')
+            return MultivariateGaussian(mean, cholesky_covariance, force_diagonal_cov, generator)
+
+        if isinstance(cholesky_covariance, Tensor):
+            return _ConstCovGaussian(mean, cholesky_covariance, force_diagonal_cov, generator)
+
+        if isinstance(mean, Tensor):
+            return _GeneralCovGaussian(lambda t: mean, cholesky_covariance, force_diagonal_cov, mean.size(-1), mean.device,generator)
+
+        if dim is None:
+            raise ValueError('Dimension must be specified if both the mean and the covariance are functions')
+        if device is None:
+            raise ValueError('Dimension must be specified if both the mean and the covariance are functions')
+
+        return _GeneralCovGaussian(mean, cholesky_covariance, force_diagonal_cov, dim, device, generator)
+
 
     @doc_function
-    def sample(self, condition_on: Tensor, sample_size: Union[Tuple[int, ...], None] = None) -> Tensor:
+    def __init__(self, mean: Union[Callable[[Tensor], Tensor], Tensor],
+                cholesky_covariance: Union[Callable[[Tensor], Tensor], Tensor],
+                force_diagonal_cov: bool = False,
+                dim: Union[int, None] = None,
+                device: Union[torch.device, None] = None,
+                generator: Union[torch.Generator, None] = None,
+                ):
+
+
+        super().__init__(generator)
+
+    @doc_function
+    def sample(self, condition_on: Tensor, sample_size: tuple[int,...]|None = None) -> Tensor:
         """
         Sample a conditional Gaussian distribution.
 
@@ -324,8 +319,6 @@ class ConditionalGaussian(Distribution):
         """
         pass
 
-    def _sample(self, *args, **kwargs) -> Tensor:
-        pass
 
     @doc_function
     def log_density(self, sample: Tensor, condition_on: Tensor) -> Tensor:
@@ -349,6 +342,25 @@ class ConditionalGaussian(Distribution):
         pass
 
 class LinearGaussian(Distribution):
+    """A Gaussian conditional distribution, where the means of the Gaussian are conditional on a supplied variable, X, through the linear map :math:`WX + B`. Where W is the weights and B is the bias.
+
+        Parameters
+        ----------
+        weight: Tensor
+            2D tensor specifying the weight matrix, W.
+        bias: Tensor
+            1D tensor specifying the bias, B.
+        cholesky_covariance: Tensor
+            2D tensor specifying the (lower) Cholesky decomposition of the covariance matrix. If the upper triangular section has non-zero
+            values these will be ignored.
+        diagonal_cov: bool
+            Whether to force the covariance matrix to be diagonal or not.
+        constrain_spectral_radius: Union[int, None]
+            If constrain_spectral_radius is an integer, then the weight matrix will be scaled so that it's spectral radius never exceed the passed value. If constrain_spectral_radius is None, no scaling is applied.
+        generator : Union[torch.Generator, None]
+            The generator to control the rng when sampling kernels from the mixture.
+    """
+
     conditional = True
 
     def __new__(cls,
@@ -357,7 +369,6 @@ class LinearGaussian(Distribution):
                 cholesky_covariance: Tensor,
                 diagonal_cov: bool = False,
                 constrain_spectral_radius: Union[float, None] = None,
-                gradient_estimator: str = 'reparameterisation',
                 generator: Union[torch.Generator, None] = None):
 
         class LinearTransform(Module):
@@ -389,41 +400,9 @@ class LinearGaussian(Distribution):
         if cholesky_covariance.device != device:
             raise ValueError(f'Weight and bias should be on the same device, found {device} and {bias.device}')
 
-        return _ConstCovGaussian(LinearTransform(), cholesky_covariance, diagonal_cov, gradient_estimator, generator)
+        return _ConstCovGaussian(LinearTransform(), cholesky_covariance, diagonal_cov, generator)
 
-    @doc_function
-    def __init__(self,
-                weight: Tensor,
-                bias: Tensor,
-                cholesky_covariance: Tensor,
-                diagonal_cov: bool = False,
-                constrain_spectral_radius: Union[float, None] = None,
-                gradient_estimator: str = 'reparameterisation',
-                generator: Union[torch.Generator, None] = None):
-        """
-            A Gaussian conditional distribution, where the means of the Gaussian are conditional on a supplied variable, X, through the linear map WX + B. Where W is the weights and B is the bias.
-
-            Parameters
-            ----------
-            weight: Tensor
-                2D tensor specifying the weight matrix.
-            bias: Tensor
-                1D tensor specifying the bias.
-            cholesky_covariance: Tensor
-                2D tensor specifying the (lower) Cholesky decomposition of the covariance matrix. If the upper triangular section has non-zero
-                values these will be ignored.
-            diagonal_cov: bool
-                Whether to force the covariance matrix to be diagonal or not.
-            constrain_spectral_radius: Union[int, None]
-                If constrain_spectral_radius is an integer, then the weight matrix will be scaled so that it's spectral radius never exceed the passed value. If constrain_spectral_radius is None, no scaling is applied.
-            gradient_estimator : str
-                The gradient estimator to use, one of 'reparameterisation', 'score' or 'none'.
-            generator : Union[torch.Generator, None]
-                The generator to control the rng when sampling kernels from the mixture.
-        """
-
-    @doc_function
-    def sample(self, condition_on: Tensor, sample_size: Union[Tuple[int, ...], None] = None) -> Tensor:
+    def sample(self, condition_on: Tensor, sample_size: tuple[int,...]|None = None) -> Tensor:
         """
         Sample a multivariate Linear Gaussian.
         The means of the Gaussian are calculated as condition_on @ self.weight + self.bias.
@@ -432,7 +411,6 @@ class LinearGaussian(Distribution):
         ----------
         condition_on: Tensor
             The vector to condition the distribution on.
-
         sample_size: Union[Tuple[int, ...], None]
             The size of the sample to draw. If None then a single sample is drawn per batch dimension and no sample dimension is used.
 
@@ -444,10 +422,6 @@ class LinearGaussian(Distribution):
         """
         pass
 
-    def _sample(self, *args, **kwargs) -> Tensor:
-        pass
-
-    @doc_function
     def log_density(self, sample: Tensor, condition_on: Tensor) -> Tensor:
         """
         Evaluate the log density of a sample.
@@ -457,7 +431,6 @@ class LinearGaussian(Distribution):
         ----------
         sample: Tensor
             The sample to get the density of.
-
         condition_on: Tensor
             The vector to condition the distribution on.
 

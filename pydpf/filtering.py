@@ -693,10 +693,6 @@ class MarginalStopGradientDPF(MarginalParticleFilter):
     -----
     See [1]_. If ``use_REINFORCE_for_proposal`` is ``True`` then this DPF is as described in [1]_ and the proposal model cannot be learned. Otherwise, if the model is bootstrap it is as in [2]_, if
     the SSM has a proposal then this is a non-published scheme.
-
-
-    .. warning:: In the current implementation, this filter is the only case where taking an SSM with a null proposal is not equivalent to the using the same module for both the proposal
-        and dynamic models. This is because a partially reparameterised estimator exists for the bootstrap case but not with a generic proposal.
     """
 
     def __init__(self,

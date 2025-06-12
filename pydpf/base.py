@@ -55,6 +55,10 @@ class Module(TorchModule):
         super().__init__()
 
 
+    def forward(self):
+        """"""
+        raise NotImplementedError('Forward not implemented for this class')
+
     def __setattr__(self, key: str, value: Any) -> None:
 
         if key.endswith('_value') and self.disallow_set_values:
@@ -110,6 +114,7 @@ class constrained_parameter:
         if not hasattr(instance, self.value_name):
             self._update(instance)
         return getattr(instance, self.value_name)
+
 
     def _update(self, instance: Module) -> None:
         #Changing tensors in place inside inference mode can cause runtime errors.

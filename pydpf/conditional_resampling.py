@@ -35,6 +35,26 @@ class ConditionalResampler(Module):
 
 
     def forward(self, state: Tensor, weight: Tensor, **data) -> tuple[Tensor, Tensor]:
+        """Apply the conditional resampler.
+
+
+        Parameters
+        ----------
+        state: Tensor
+            The particle state
+        weight: Tensor
+            The particle weight
+        data: dict[str, Tensor]
+            The remaining data categories
+
+        Returns
+        -------
+        resampled_state: Tensor
+            The conditionally resampled state.
+        resampled_weight: Tensor
+            The conditionally resampled weight.
+
+        """
         with torch.no_grad():
             resample_mask = self.condition(state=state, weight=weight, **data)
         if not torch.any(resample_mask):

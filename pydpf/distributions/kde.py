@@ -1,57 +1,63 @@
 from .base import Distribution
 from torch import Tensor
-from .Gaussian import MultivariateGaussian
-from typing import Iterable, Union, Tuple, List
+from typing import Union
 import torch
-from ..utils import doc_function, batched_select
+from ..utils import batched_select
 from ..resampling import MultinomialResampler
+from ..base import Module
 
 
 class CompoundDistribution(Distribution):
-    """
-        Class for when the desired random variable can be expressed as a set of independent components.
-        Primarily included to allow kernels that have different distributions along different dimensions.
-    """
-    conditional = False
-
-    def __init__(self, distributions: Iterable[Distribution], gradient_estimator: str, generator: Union[torch.Generator, None]):
-        """
-        A wrapper that concatenates several distributions into a single distribution object.
+    """A wrapper that concatenates several distributions into a single distribution object.
         Interdependence between the distributions is not permitted.
 
         Parameters
         ----------
-        distributions: Iterable[Distribution]
+        distributions: list[Distribution|Module, ...]
             An iterable of the distributions that form the components of the compound.
-        gradient_estimator : str
-            The gradient estimator to use, one of 'reparameterisation', 'score' or 'none'.
-        generator : Union[torch.Generator, None]
-            The generator to control the rng when sampling kernels from the mixture.
-        """
-        super().__init__(gradient_estimator, generator)
+        generator : Unused parameter
+
+        Notes
+        -----
+        If a distribution in the list distributions is not a Distribution subclass (i.e. it is a custom implementation) then it must have the following attributes::
+
+        dim : the dimension of the distribution.
+
+        sample() : method that takes the parameter `sample_size` and returns a tensor of that size with an extra final dimension of size dim.
+
+        log_density() : method that takes the parameter `sample` and returns a tensor of the same size without the final dimension, assumed to be of size dim.
+    """
+    conditional = False
+
+    def __init__(self, distributions: list[Distribution|Module, ...], generator):
+        super().__init__(torch.default_generator)
         self.dists = distributions
-        self.reparameterisable = True
         self.dim = 0
         #register submodules
         self.dists = torch.nn.ModuleList(distributions)
         for dist in self.dists:
+            if not isinstance(dist, Distribution):
+                if not hasattr(dist, "sample"):
+                    raise AttributeError('Custom distributions must have an "sample" method.')
+                if not hasattr(dist, "log_density"):
+                    raise AttributeError('Custom distributions must have an "log_density" method.')
+                if not hasattr(dist, "dim"):
+                    raise AttributeError('Custom distributions must have an "dim" attribute.')
+            else:
+                if type(dist).conditional:
+                    raise TypeError(f'None of the component distributions may be conditional, detected {type(dist)} which is.')
+                if self.device != dist.device:
+                    raise ValueError(f'All component distributions must have all parameters on the same device, found {self.device} and {dist.device}.')
             self.dim += dist.dim
-            self.reparameterisable = self.reparameterisable and dist.reparameterisable
-            if type(dist).conditional:
-                raise TypeError(f'None of the component distributions may be conditional, detected {type(dist)} which is.')
-            if self.device != dist.device:
-                raise ValueError(f'All component distributions must have all parameters on the same device, found {self.device} and {dist.device}.')
 
 
-    @doc_function
-    def sample(self, sample_size: Union[Tuple[int], None]) -> Tensor:
-        """
-        Sample a Compound distribution.
+    def sample(self, sample_size: tuple[int, ...]|None) -> Tensor:
+        """Sample a Compound distribution.
         The sample is the concatenation of samples from the components distributions along the last axis.
 
         Parameters
         ----------
-        sample_size : Union[Tuple[int], None]
+        sample_size : tuple[int, ...]|None
             The size of the sample to draw. If None then a single sample is drawn and no sample dimension is used.
 
         Returns
@@ -59,17 +65,13 @@ class CompoundDistribution(Distribution):
         sample: Tensor
             The resulting sample.
         """
-        pass
-
-    def _sample(self, sample_size: Union[Tuple[int], None]) -> Tensor:
         samples = []
         for dist in self.dists:
             samples.append(dist.sample(sample_size))
         return torch.cat(samples, dim=-1)
 
     def log_density(self, sample: Tensor) -> Tensor:
-        """
-        Evaluate the log density of a sample.
+        """Evaluate the log density of a sample.
 
         Parameters
         ----------
@@ -100,52 +102,42 @@ def sample_only_multinomial(state: Tensor, weights: Tensor, generator) -> Tensor
 
 
 class KernelMixture(Distribution):
-    '''
-        Class for KDE mixtures.
-    '''
+    """Create a kernel density mixture.
+    The parameter kernel is an unconditional distribution which will be convolved over the kernel density mixture.
+    The resultant distribution is conditional on the locations and weights of the kernels.
+
+    Parameters
+    ----------
+    kernel: list[tuple[str,int], ...]|Distribution
+        The kernel to convolve over the particles to form the KDE sampling distribution.
+    generator : Union[torch.Generator, None]
+        The generator to control the rng when sampling kernels from the mixture.
+
+    Notes
+    -----
+    If the kernel is not a Distribution subclass (i.e. it is a custom implementation) then it must have the following attributes:
+
+    dim : the dimension of the distribution.
+
+    sample() : method that takes the parameter `sample_size` and returns a tensor of that size with an extra final dimension of size dim.
+
+    log_density() : method that takes the parameter `sample` and returns a tensor of the same size without the final dimension, assumed to be of size dim.
+    """
     conditional = True
 
-    def make_kernel(self, kernel: str, dim: int) -> Distribution:
-        if not kernel == 'Gaussian':
-            raise NotImplementedError('Only Gaussian kernels are implemented for automatic generation.')
-        cov = torch.nn.Parameter(torch.eye(dim, device=self.generator.device) * torch.rand(dim, device=self.generator.device, generator=self.generator))
-        return MultivariateGaussian(torch.zeros(dim, device=self.generator.device), cov, generator=self.generator, gradient_estimator='none', diagonal_cov=True)
-
-    def __init__(self, kernel: Union[List[Tuple[str, int]], Distribution], gradient_estimator: str, generator: Union[torch.Generator, None]):
-        """
-        Create a kernel density mixture.
-        The parameter kernel is an unconditional distribution which will be convolved over the kernel density mixture.
-        The resultant distribution is conditional on the locations and weights of the kernels.
-
-        Notes
-        -----
-        The parameter kernel can either be a valid KernelMixture or a recipe for creating one. The recipe is specified by a list of 2-element Tuples. The first element is the name of the distribution and
-        the second is the number of dimensions that should be distributed as the given distribution. For example if the state was the position and orientation of an object in 2D, where the positions have a Gaussian Kernel,
-        and the orientation a von Mises kernel, the appropriate list would be [('Gaussian', 2), ('von Mises', 1)].
-
-        Parameters
-        ----------
-        kernel: Union[List[Tuple[str, int]], KernelMixture
-            The kernel to convolve over the particles to form the KDE sampling distribution.
-        gradient_estimator : str
-            The gradient estimator to use, one of 'reparameterisation', 'score' or 'none'.
-        generator : Union[torch.Generator, None]
-            The generator to control the rng when sampling kernels from the mixture.
-        """
-
-
-        super().__init__(gradient_estimator, generator)
+    def __init__(self, kernel: list[Distribution|Module], generator: Union[torch.Generator, None]):
+        super().__init__(generator)
         self.resampler = MultinomialResampler(generator=generator)
-        if isinstance(kernel, Distribution):
-            self.kernel = kernel
-        elif len(kernel) == 1:
-            self.kernel = self.make_kernel(kernel[0][0], kernel[0][1])
-        else:
-            subkernels = [self.make_kernel(subkernel[0], subkernel[1]) for subkernel in kernel]
-            self.kernel = CompoundDistribution(subkernels, gradient_estimator='none', generator=generator)
-        self.reparameterisable = True
+        if not isinstance(kernel, Distribution):
+            if not hasattr(kernel, "sample"):
+                raise AttributeError('Custom distributions must have an "sample" method.')
+            if not hasattr(kernel, "log_density"):
+                raise AttributeError('Custom distributions must have an "log_density" method.')
+            if not hasattr(kernel, "dim"):
+                raise AttributeError('Custom distributions must have an "dim" attribute.')
+        self.kernel = kernel
         self.dim = self.kernel.dim
-        if type(self.kernel).conditional:
+        if isinstance(kernel, Distribution) and type(self.kernel).conditional:
             raise ValueError(f'The kernel distribution cannot be conditional, detected {type(self.kernel)} which is.')
 
     def _check_conditions(self, loc: Tensor, weight: Tensor) -> None:
@@ -158,30 +150,24 @@ class KernelMixture(Distribution):
         if weight.size(-1) != loc.size(-2):
             raise ValueError(f'Differing number of kernels locations{loc.size(-2)} and weights {weight.size(-1)}.')
 
-    @doc_function
-    def sample(self,  loc: Tensor, weight: Tensor, sample_size: Union[Tuple[int], None]) -> Tensor:
-        """
-        Sample a KDE mixture
+
+    def sample(self,  loc: Tensor, weight: Tensor, sample_size: tuple[int,...]|None) -> Tensor:
+        """Sample a KDE mixture
 
         Parameters
         ----------
         loc : Tensor
             Locations of the Kernels
-
         weight  : Tensor
             Weights of the Kernels
-
-        sample_size : Union[Tuple[int], None]
+        sample_size : tuple[int,...]|None
             The size of the sample to draw. If None then a single sample is drawn per batch dimension and no sample dimension is used.
 
         Returns
         -------
         Sample: Tensor
-         A sample from the KDE mixture.
+            A sample from the KDE mixture.
         """
-        pass
-
-    def _sample(self,  loc: Tensor, weight: Tensor, sample_size: Union[Tuple[int], None]) -> Tensor:
         #Multinomial resampling is sampling from a KDE with a dirac kernel.
         self._check_conditions(loc, weight)
         try:
@@ -190,32 +176,28 @@ class KernelMixture(Distribution):
             raise RuntimeError(f'Failed to sample kernels with error: \n {e} \n This is likely due to a mismatch in batch dimensions.')
         batch_size = self.get_batch_size(sampled_locs.size(), 2)
         if sample_size is None:
-            sample = self.kernel._sample(sample_size=batch_size)
+            sample = self.kernel.sample(sample_size=batch_size)
         else:
-            sample = self.kernel._sample(sample_size=(*batch_size, *sample_size))
+            sample = self.kernel.sample(sample_size=(*batch_size, *sample_size))
         return sampled_locs + sample
 
     def log_density(self, sample: Tensor, loc: Tensor, weight: Tensor) -> Tensor:
-        """
-        Evaluate the log density of a sample.
+        """Evaluate the log density of a sample.
 
         Parameters
         ----------
         sample: Tensor
             The sample to get the density of.
-
         loc : Tensor
             Locations of the Kernels
-
         weight  : Tensor
             Weights of the Kernels.
 
         Returns
         -------
         Sample: Tensor
-         The log density of each datum in the sample.
+            The log density of each datum in the sample.
         """
-
         try:
             self._check_conditions(loc, weight)
             densities = self.kernel.log_density(sample.unsqueeze(-2) - self._unsqueeze_to_size(loc, sample.unsqueeze(-2), 2))

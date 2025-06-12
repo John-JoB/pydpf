@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "pydpf"
 description = "A package for differentiable particle filtering"
-version = "0.0"
+version = "1.0.0"
 authors = [
   {name = "John-Joseph Brady", email = "john-joseph.brady@kcl.ac.uk"},
   {name = "Benjamin Cox", email = "benjamin.cox@ed.ac.uk"},

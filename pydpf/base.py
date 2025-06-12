@@ -1,40 +1,44 @@
+"""
+This module contains the base pydpf.Module class that custom modules for use with pydpf should inherit from.
+"""
+
 import torch
 from torch.nn import Module as TorchModule
-from abc import ABCMeta
 from typing import Any, Callable, Tuple
 import functools
 from torch import Tensor
 import warnings
 
-def custom_formatwarning(msg, *args, **kwargs):
+def _custom_formatwarning(msg, *args, **kwargs):
     return str(msg) + '\n'
 
-warnings.formatwarning = custom_formatwarning
+warnings.formatwarning = _custom_formatwarning
 
 class DivergenceError(Exception):
+    """Custom error type to catch instances of SMC algorithms diverging"""
     pass
 
 
 class Module(TorchModule):
-    """
-    Base class for all modules in pydpf.
-    Includes an update method that should be called after a gradient update to update quantities derived from parameters.
-    This provided to work around pytorch insisting on gradient updates being in place.
-    We provide two new function decorators, 'constrained_parameter' and 'cached_property'.
+    """Base class for all modules in PyDPF.
+    Includes an update method that should be called after a parameter update to update quantities derived from parameters.
+    This is provided to work around pytorch insisting on parameter updates being in place.
+    We provide two new function decorators, ``@constrained_parameter`` and ``@cached_property``.
     Both are used to store functions of module parameters that are expensive to compute so it is undesirable to recalculate them everytime
     they are used.
-    These provide similar functionality to pytorch's parameterization API, but with simpler to use for code that has a lot of custom modules.
+    These provide similar functionality to pytorch's parameterization API, but simpler to use for code that has a lot of custom modules.
 
-    @cached_property is used to store any intermediate value, for example the inverse of a covariance matrix. Gradient is freely passed through
+    ``@cached_property`` is used to store any intermediate value, for example the inverse of a covariance matrix. Gradient is freely passed through
     the computation of a cached_property.
 
-    @constrained_parameter should be used to impose constraints only, the underlying data is modified inplace and without gradient.
+    ``@constrained_parameter`` should be used to impose constraints only, the underlying data is modified inplace and without gradient. ``@constrained_parameter``
+    should always act directly on the underlying parameter, they cannot be stacked or used to constrain functions of parameters.
 
     Notes
     -----
-    A use case not covered by @cached_property and @constrained_parameter, is if the wrapped function should be computed out-of-place, such as to
+    A use case not covered by ``@cached_property`` and ``@constrained_parameter``, is if the wrapped function should be computed out-of-place, such as to
     allow gradient tracking, but appear as if the change is made in-place. I.e. we want to modify a parameter from a function declared outside the
-    module to which it belongs, and pass gradient through this map. This is the intended use case of the torch.parameterization API so use that
+    module to which it belongs, and pass gradient through this map. This is the intended use case of the ``torch.parameterization`` API so use that
     instead.
     """
 
@@ -78,28 +82,27 @@ class Module(TorchModule):
             if isinstance(child, Module):
                 child._update()
 
-class PropertyAttributeError(Exception):
-    pass
 
 class constrained_parameter:
+    """Wrapper for constraining parameters.
+    The wrapped function must belong to a Module and should take only a reference to its parent Module and return a reference to the original
+    parameter and a tensor containing the new value.
 
+    ``constrained_parameter`` applies the change in-place; the underlying data of the parameter is modified. Necessarily, therefore this is
+    done without gradient tracking.
+
+    The constraint is applied on calling ``Module.update()``, so you should do this after every gradient update to preserve the constraint.
+
+    Notes
+    -----
+    ``constrained_parameters`` can be applied to any parameter accessible from a ``Module`` including as attributes of a child ``Module``.
+    This is safe as the parameter is changed in-place.
+
+    .. warning::  ``@constrained_parameter`` should be used to impose constraints only, the underlying data is modified inplace and without gradient. ``@constrained_parameter``
+    should always act directly on the underlying parameter, they cannot be stacked or used to constrain functions of parameters.
+    """
 
     def __init__(self, function: Callable[[Module], Tuple[Tensor, Tensor]]):
-        """
-            Wrapper for constraining parameters.
-            The wrapped function must belong to a Module and should take only a reference to its parent Module and return a reference to the original
-            parameter and a tensor containing the new value.
-
-            constrained_parameter applies the change in-place; the underlying data of the parameter is modified. Necessarily, therefore this is
-            done without gradient tracking.
-
-            The constraint is applied on calling Module.update(), so you should do this after every gradient update to preserve the constraint.
-
-            Notes
-            -----
-            constrained_parameters can be applied to any parameter accessible from a Module including as attributes of a child Module.
-            This is safe as the parameter is changed in-place.
-        """
         self.function = function
         functools.update_wrapper(self, function)
         self.value_name = f'{self.function.__name__}_value'
@@ -114,10 +117,7 @@ class constrained_parameter:
         @torch.inference_mode(mode=False)
         def f():
             with torch.no_grad():
-                try:
-                    d = self.function(instance)
-                except AttributeError as e:
-                    raise PropertyAttributeError(e)
+                d = self.function(instance)
                 d[0].data = d[1]
             return d[0]
 
@@ -131,27 +131,26 @@ class constrained_parameter:
 
 
 class cached_property:
+    """Wrapper for caching functions of parameters.
+    The wrapped function must belong to a Module and should take only a reference to its parent Module and tensor containing the new value
+    that will be stored.
+
+    cached_property applies its map out-of-place, creating a new tensor. Gradient tracking is permitted through the map.
+
+    The cached_property is calculated lazily; when it is first accessed it is calculated and cached.
+    Calling Module.update() resets the value so that it will be recomputed on next access.
+
+    .. warning:: PyTorch generally expects the gradient graph to be created on each forward pass, and destroys it on backwards passes.
+    Therefore, it is recommended to  call ``.update()`` on the top level ``Module`` whenever running a script with gradient tracking even if it is known that the parameters have not changed.
+    """
     def __init__(self, function: Callable):
-        """
-            Wrapper for caching functions of parameters.
-            The wrapped function must belong to a Module and should take only a reference to its parent Module and tensor containing the new value
-            that will be stored.
-
-            cached_property applies its map out-of-place, creating a new tensor. Gradient tracking is permitted through the map.
-
-            The cached_property is calculated lazily; when it is first accessed it is calculated and cached.
-            Calling Module.update() resets the value so that it will be recomputed on next access.
-        """
         self.function = function
         functools.update_wrapper(self, function)
         self.value_name = f'{self.function.__name__}_value'
 
     def __get__(self, instance, owner):
         if not hasattr(instance, self.value_name):
-            try:
-                v = self.function(instance)
-            except AttributeError as e:
-                raise PropertyAttributeError(e)
+            v = self.function(instance)
             instance.disallow_set_values = False
             setattr(instance, self.value_name, v)
             instance.disallow_set_values = True

@@ -1,18 +1,16 @@
 import torch
 from torch import Tensor
-from typing import Callable, Tuple
+from typing import Callable
 from .base import Module
 from .distributions import KernelMixture
-from .custom_types import ImportanceKernel
 
 class FilteringMean(Module):
     def __init__(self,function: Callable[[Tensor], Tensor] = lambda x: x):
-        """
-        Get an estimate of the filtering mean of a function of the latent state.
+        """Get an estimate of the filtering mean of a function of the latent state.
 
         Parameters
         ----------
-        function: Callable[[Tensor], Tensor]
+        function: Callable[[Tensor], Tensor]. Default identity function.
             The function of the latent state to estimate.
         """
         super().__init__()
@@ -24,12 +22,11 @@ class FilteringMean(Module):
 class MSE_Loss(Module):
 
     def __init__(self,function: Callable[[Tensor], Tensor] = lambda x: x):
-        """
-        Get the per-timestep mean squared error of a function of the latent state compared to ground truth over a batch of filters.
+        """Get the per-timestep mean squared error of a function of the latent state compared to ground truth over a batch of filters.
 
         Parameters
         ----------
-        function: Callable[[Tensor], Tensor]
+        function: Callable[[Tensor], Tensor]. Default identity function.
             The function of the latent state to estimate.
         """
         super().__init__()
@@ -37,18 +34,12 @@ class MSE_Loss(Module):
 
     def forward(self, *, state: Tensor, weight: Tensor, ground_truth, **data):
         filter_mean = self.mean(state = state, weight = weight)
-        #print(filter_mean[0])
-        #print(ground_truth[0])
-        #print(torch.sum((ground_truth - filter_mean) ** 2, dim=-1)[0])
         return torch.mean(torch.sum((ground_truth - filter_mean) ** 2, dim=-1))
 
 class LogLikelihoodFactors(Module):
 
     def __init__(self):
-        """
-        Get the log observation likelihood factor for each time step.
-        Such that an estimate of the log likelihood over the trajectory may be given by a sum of these factors.
-        """
+        """Get the log observation likelihood factor for each time step. Such that an estimate of the log likelihood over the trajectory may be given by a sum of these factors."""
         super().__init__()
 
     def forward(self, likelihood, **kwargs) -> Tensor:
@@ -57,14 +48,16 @@ class LogLikelihoodFactors(Module):
 class ElBO_Loss(Module):
 
     def __init__(self):
-        """
-        Get the factors of the ELBO loss per-timestep for a batch of filters.
-        The complete ELBO loss may be given by a sum of these factors.
+        """Get the factors of the ELBO loss per-timestep for a batch of filters. The complete ELBO loss may be given by a sum of these factors. This is the negative of the ELBO.
 
         Notes
         -----
         As an average of the log-likelihood, the ELBO estimates a Jensens' inequality lower bound to the mean log of the likelihood.
-        The SMC ELBO is not exactly analogous to the variation auto-encoder ELBO, see C. Naesseth, S. Linderman, R. Ranganath, and D. Blei, 'Variational Sequential Monte-Carlo', 2018 for more information.
+        The SMC ELBO is not exactly analogous to the variation auto-encoder ELBO, see [1]_ for more information.
+
+        References
+        ----------
+        .. [1] Naesseth C, Linderman S, Ranganath R, Blei D (2018). “Variational sequential monte carlo.” In Proc. Int. Conf. Art. Int. and Stat. (AISTATS), pp. 968–977. PMLR, Lanzarote, Canary Islands.
         """
         super().__init__()
 
@@ -74,13 +67,12 @@ class ElBO_Loss(Module):
 
 class PredictiveMean(Module):
 
-    def __init__(self, prediction_kernel: ImportanceKernel, lag: int, function: Callable[[Tensor], Tensor] = lambda x: x):
-        """
-        Predict the state n steps ahead.
+    def __init__(self, prediction_kernel: Callable, lag: int, function: Callable[[Tensor], Tensor] = lambda x: x):
+        """Predict the state n steps ahead.
 
         Parameters
         ----------
-        prediction_kernel: ImportanceKernel
+        prediction_kernel: Module
             A function to importance sample from the predictive distribution n-steps ahead. Typically, this will entail be applying the bootstrap proposal n-times.
         lag: int
             How many steps ahead the prediction is being made.

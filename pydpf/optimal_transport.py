@@ -1,36 +1,29 @@
+"""This python module contains methods for the Sinkhorn algorithm"""
 import torch
 from torch import Tensor
 from typing import Tuple
 
 def get_transport_from_potentials(log_a: Tensor, log_b: Tensor, cost: Tensor, f: Tensor, g: Tensor, epsilon: float) -> Tensor:
-    """
-    Calculates the transport matrix from the Sinkhorn potentials
+    """Calculates the transport matrix from the Sinkhorn potentials
 
     Parameters
     ------------
-
     log_a: (B,M) Tensor
             log of the weights of the proposal distribution
-
     log_b: (B,N) Tensor
         log of the weights of the target distribution
-
     cost: (B,M,N) Tensor
         The per unit cost of transporting mass from the proposal to the target
-
     f: (B,M) pt.Tensor
             Potential on the proposal
-
     g: (B,N) pt.Tensor
         Potential on the target
-
     epsilon: float
         Regularising parameter
 
     Returns
     ---------
-
-    T: (B,M,N)
+    T: (B,M,N) Tensor
         The transport matrix
     """
     log_prefactor = log_b.unsqueeze(1) + log_a.unsqueeze(2)
@@ -50,10 +43,8 @@ def apply_transport(x_t: Tensor, transport: Tensor, N: int) -> Tensor:
     -------------
     x_t: (B,N,D) Tensor
         Particle locations to be transported
-
     transport: (B,M,N) Tensor
         The transport matrix
-
     N: int
         Number of particles
 
@@ -61,7 +52,7 @@ def apply_transport(x_t: Tensor, transport: Tensor, N: int) -> Tensor:
     return (N * torch.transpose(transport, 1, 2)) @ x_t
 
 
-def opt_potential(log_a: Tensor, c_potential: Tensor, cost: Tensor, epsilon: Tensor) -> Tensor:
+def opt_potential(log_a: Tensor, c_potential: Tensor, cost: Tensor, epsilon: Tensor|float) -> Tensor:
     """
         Calculates the update in the Sinkhorn loop for distribution b (either proposal or target)
 
@@ -69,20 +60,25 @@ def opt_potential(log_a: Tensor, c_potential: Tensor, cost: Tensor, epsilon: Ten
         -----------
         log_a: (B,N) Tensor
             log of the weights of distribution a
-
         c_potential: (B, N) Tensor
             the current potential of distribution a
-
         cost: (B,N,M) Tensor
             The per unit cost of transporting mass from distribution a to distribution b
-
-        epsilon: float
+        epsilon: (B) Tensor|float
             Regularising parameter
 
         Returns
         -----------
         n_potential: (B, M) pt.Tensor
             The updated potential of distribution b
+
+        Notes
+        -----
+        Sinkhorn algorithm proposed in [1]_.
+
+        References
+        ----------
+        .. [1] Cuturi M (2013). “Sinkhorn distances: Lightspeed computation of optimal transport.” Proc. Adv. Neural Inf. Process. Syst. (NeurIPS).
 
 
     """
@@ -92,49 +88,45 @@ def opt_potential(log_a: Tensor, c_potential: Tensor, cost: Tensor, epsilon: Ten
         return -epsilon.squeeze(2) * temp
     return -epsilon * temp
 
-def sinkhorn_loop(log_a: Tensor, log_b: Tensor, cost: Tensor, epsilon: float, threshold: float, max_iter: int, diam: Tensor, rate: float) -> Tuple[Tensor, Tensor, Tensor]:
-    """
-        Calculates the Sinkhorn potentials for entropy regularised optimal transport between two atomic distributions via the Sinkhorn algorithm
+def sinkhorn_loop(log_a: Tensor, log_b: Tensor, cost: Tensor, epsilon: float, threshold: float, max_iter: int, state_extent: Tensor, rate: float) -> Tuple[Tensor, Tensor, Tensor]:
+    """Calculates the Sinkhorn potentials for entropy regularised optimal transport between two atomic distributions via the Sinkhorn algorithm
 
         Parameters
         ---------------
         log_a: (B,M) Tensor
             log of the weights of the proposal distribution
-
         log_b: (B,N) Tensor
             log of the weights of the target distribution
-
         cost: (B,M,N) Tensor
             The per unit cost of transporting mass from the proposal to the target
-
         epsilon: float
             Regularising parameter
-
         threshold: float
             The difference in iteratations below which to halt and return
-
         max_iter: int
             The maximum amount of iterations to run regardless of whether the threshold is hit
-
-        diam: Tensor
-            The diameter of the data, used to
+        state_extent: (B) Tensor
+            The difference between the maximum and minimum value per batch in the state tensor.
 
         Returns
         ---------------
-
         f: (B,M) Tensor
             Potential on the proposal
-
         g: (B,N) Tensor
             Potential on the target
 
         Notes
-        -----------
+        -----
         Due to convergening to a point, this implementation only retains the gradient at the last step
+        Sinkhorn algorithm proposed in [1]_.
+
+        References
+        ----------
+        .. [1] Cuturi M (2013). “Sinkhorn distances: Lightspeed computation of optimal transport.” Proc. Adv. Neural Inf. Process. Syst. (NeurIPS).
     """
     device = log_a.device
     i = 1
-    epsilon_now = torch.clip(diam ** 2, min=epsilon).detach()
+    epsilon_now = torch.clip(state_extent ** 2, min=epsilon).detach()
     cost_T = torch.transpose(cost, 1, 2)
     f_i = opt_potential(log_b, torch.zeros_like(log_b, device=device), cost, epsilon_now)
     g_i = opt_potential(log_a, torch.zeros_like(log_a, device=device), cost_T, epsilon_now)

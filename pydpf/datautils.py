@@ -1,3 +1,4 @@
+"""Utility module for handling state-space data"""
 import torch
 import pandas as pd
 from torch.utils.data import Dataset
@@ -13,8 +14,8 @@ from pathlib import Path
 from itertools import chain
 
 class StateSpaceDataset(Dataset):
-    '''
-        Dataset class for state-observation data.
+    """Dataset class for state-observation data.
+
         Latent state of the system stored in the state Tensor.
 
         Dimensions are Discrete Time - Batch - Data
@@ -22,9 +23,53 @@ class StateSpaceDataset(Dataset):
         When used as called from a dataloader you must use the custom collate function
         Data will always be returned in the order 'state' - 'observation' - 'time' - 'control' - 'metadata'
 
-        At the moment I only give functionality to load entire data set into RAM/VRAM.
-        Might give the option to load lazily in the future, if required.
-    '''
+        At the moment only functionality to load entire data set into RAM/VRAM is provided.
+        Lazy loading is a planned feature.
+
+        Parameters
+        ----------
+        data_path: Union[Path,str].
+            The path of the data file or folder.
+        series_id_column: str. Default "series_id"
+             The heading of the series_id column in the csv files.
+        state_prefix: str|None. Default None.
+            The prefix of heading of the state columns in the csv files.
+        observation_prefix: str. Default "observation".
+            The prefix of heading of the observation columns in the csv files.
+        time_column: str|None. Default None.
+            The heading of the time column in the csv files.
+        control_prefix: str|None. Default None.
+            The prefix of heading of the control columns in the csv files.
+        device: torch.device. Default torch.device('cpu').
+
+        Notes
+        -----
+        We provide methods to load data from files, obeying a certain format,
+        into a map-style ``torch.utils.data.Dataset`` object and therefore be accessed easily from a
+        ``torch.utils.data.DataLoader``. We allow one of two data storage formats, either storing
+        the entire dataset in a single .csv file, or storing each trajectory in separate files {1.csv,
+        2.csv, ..., T.csv} in a dedicated directory. The .csv files are formed of headed columns
+        there must be at least one observation column, with state, time, and control columns
+        being optional. As all the data categories, apart from time, are vector valued there can be
+        multiple columns for each category. For the single-file format there must be additionally a
+        series_id column that will be used to index each trajectory, for the multiple file format the
+        series_id is encoded in the file name.
+        The data category series_metadata exists to store exogenous variables that the trajectories
+        might depend on, but are constant over a trajectory. These are to be stored in a separate
+        .csv indexed by a series_id column.
+        Given a file in the required format, loading a dataset is simple: initialise this class
+        with the data’s path, the column labels and the device to store data retrieved by the data
+        loader. When initialising the data loader, it is crucial that the argument collate_fn is set to
+        ``dataset.collate`` where dataset is the dataset passed to the data loader. PyTorch’s default
+        collate function will not return the data in a format that obeys PyDPF conventions. When
+        looping over the data loader, data is returned as tuple in the ordering state - observation -
+        time - control - series_metadata with only the field that exist being returned.
+
+
+        See test_trajectory.csv at https://github.com/John-JoB/pydpf/tree/main/jss_examples/Stochastic%20Volatility for an example.
+
+        .. Note:: When initialising a ``torch.utils.data.DataLoader`` the argument collate_fn must be set to ``dataset.collate`` where ``dataset`` is the instance of this class passed to the data loader.
+    """
 
     @property
     def state(self):
@@ -59,12 +104,12 @@ class StateSpaceDataset(Dataset):
     def __init__(self,
                  data_path: Union[Path,str],
                  *,
-                 series_id_column="series_id",
-                 state_prefix=None,
-                 observation_prefix="observation",
-                 time_column=None,
-                 control_prefix=None,
-                 device = torch.device('cpu')
+                 series_id_column: str = "series_id",
+                 state_prefix: str|None = None,
+                 observation_prefix: str ="observation",
+                 time_column: str|None =None,
+                 control_prefix: str|None =None,
+                 device: torch.device = torch.device('cpu')
              ):
         self.device = device
         self.data = load_data_csv(data_path, series_id_column = series_id_column, state_prefix = state_prefix, observation_prefix = observation_prefix, time_column = time_column, control_prefix = control_prefix)
@@ -105,6 +150,7 @@ class StateSpaceDataset(Dataset):
         return self.data['tensor'][idx]
 
     def collate(self, batch) -> Tuple[torch.Tensor, ...]:
+        """Pass to the ``collate_fn`` parameter of any ``torch.utils.data.DataLoader`` object that uses this dataset."""
         #By default, the batch is the first dimension.
         #Pass this function to collate_fn when defining a dataloader to make it the second.
         #collated_batch = torch.utils.data.default_collate(batch)
@@ -119,8 +165,7 @@ class StateSpaceDataset(Dataset):
             return *(collated_batch[:, :, self.data['indices'][data_category]].squeeze(-1).contiguous() if data_category == "time" else collated_batch[:, :, self.data['indices'][data_category]].contiguous() for data_category in self.data_order),
 
     def normalise_dims(self, normalised_series:str = 'observation', scale_dims: str = 'all', individual_timesteps: bool = False, dims: Union[Tuple[int], None] = None) -> Tuple[torch.Tensor, torch.Tensor]:
-        """
-        Normalise the data to have mean zero and standard deviation one.
+        """Normalise the data to have mean zero and standard deviation one.
 
         This function normalises the data inplace and returns the offset and scale. Such that the original data can be reclaimed by original_data = normalised_data * scale + offset.
 
@@ -153,7 +198,6 @@ class StateSpaceDataset(Dataset):
             The per-element offset.
         scaling: torch.Tensor
             The per-element scaling.
-
         """
         with torch.no_grad():
             if not scale_dims in ['all', 'max', 'min', 'norm']:
@@ -197,11 +241,17 @@ class StateSpaceDataset(Dataset):
             return means.transpose(0, -1).transpose(0,1).contiguous(), std.transpose(0, -1).transpose(0,1).contiguous()
 
     def apply(self, f, modified_series:str = 'observation'):
-        """
-        Apply a function across all trajectories
+        """Apply a function across all trajectories
 
-        Returns
-        -------
+        Takes a function f that takes a ``**dictionary`` of data categories, e.g. ``f = lambda: time, state, **kwargs = time * state`` for a function that returns the state multiplied by the time.
+        And replaces the series given by ``modified_series`` with the output of f for every trajectory in a dataset.
+
+        Parameters
+        ----------
+        f: function
+            function to be applied across all trajectories
+        modified_series: str. Default 'observation'
+            The series to replace with the output of f
 
         """
         with torch.no_grad():
@@ -283,11 +333,8 @@ def _save_file_csv(path:Path, state, observation, control, time, n_processes = -
 
 
 def simulate_and_save(data_path: Union[Path, str],
+                    SSM: FilteringModel,
                     *,
-                    SSM: FilteringModel = None,
-                    prior: Callable = None,
-                    Markov_kernel: Callable = None,
-                    observation_model: Callable = None,
                     time_extent: int,
                     n_trajectories: int,
                     batch_size: int,
@@ -295,19 +342,56 @@ def simulate_and_save(data_path: Union[Path, str],
                     control: Tensor = None,
                     time:Tensor = None,
                     n_processes = -1,
-                    by_pass_ask = False):
+                    bypass_ask = False):
 
-    if SSM is not None:
-        prior = lambda _batch_size, **_data_dict:  torch.squeeze(SSM.prior_model.sample(_batch_size, 1, **_data_dict), 1)
-        observation_model = lambda _state, **_data_dict: SSM.observation_model.sample(state=_state, **_data_dict)
-        Markov_kernel = lambda _prev_state, **_data_dict: SSM.dynamic_model.sample(prev_state=_prev_state, **_data_dict)
+    r"""Simulate data from a state-space model or and save as csv in our standard format or a collection of csvs, one per trajectory.
+
+        Parameters
+        ----------
+        data_path: Union[Path, str]
+            The path at which to save the generated data. Can be either a ``.csv`` or directory.
+        SSM: FilteringModel
+            The state-space model to simulate from.
+        time_extent: int
+            The amount of time steps to simulate per-trajectory excluding ``t=0``. Taking ``time_extent = T`` generates data at time-steps :math:`t \in \[0,\dots,T]`
+        n_trajectories: int
+            The number of the trajectories to simulate.
+        batch_size: int
+            The number of trajectories to simulate as a batch, using GPU parallelism if available.
+        device: Union[str, torch.device]
+            The device to generate the trajectories on. Default CPU.
+        control: Tensor|None, Default: None
+            The control actions.
+        time: Tensor|None, Default: None
+            The time each timestep should occur at.
+        n_processes: int, Default = -1
+            The number of cpu processes to use to save the data in parallel. When equal to -1 all cores are used.
+        bypass_ask: bool, Default = False
+            If False then this function will ask for confirmation before it overwrites an existing file or directory. If bypass_ask is True then it proceed without asking for confirmation.
+
+        Notes
+        -----
+        If ``data_path`` ends in ".csv" then all trajectories will be saved in a single csv file at that path. If it is a directory then the trajectories will be saved in separate csvs in that directory.
+
+        ``SSM`` must have the following components ``prior_model``, ``dynamic_model`` and ``observation_model``. All must have a ``.sample`` method defined. Despite not generating multiple samples per-trajectory,
+        as we do during filtering all ``.sample`` methods should act the as if there were. I.e. the particle dimension should exist, but will always be of size 1.
+
+        ``control`` should be a ``time_extent`` X ``n_trajectories`` X ``inherent_dim`` tensor if specified. ``time`` should be a ``time_extent`` X ``n_trajectories`` if specified. This matches usual ``PyDPF`` convention.
+
+        ``n_processes`` only specifies the number of processes used for saving the data and not generating it. Generating the data is done using standard CUDA parallelism if on the GPU and no parallelism on the CPU. This
+        is efficient on the GPU and avoids the pitfalls of multiprocessing with PyTorch.
+    """
+
+    prior = lambda _batch_size, **_data_dict:  torch.squeeze(SSM.prior_model.sample(_batch_size, 1, **_data_dict), 1)
+    observation_model = lambda _state, **_data_dict: SSM.observation_model.sample(state=_state, **_data_dict)
+    Markov_kernel = lambda _prev_state, **_data_dict: SSM.dynamic_model.sample(prev_state=_prev_state, **_data_dict)
     if isinstance(data_path, str):
         data_path = Path(data_path)
     if data_path.suffix == '.csv':
         state_list = []
         observation_list = []
         if data_path.is_file():
-            if not by_pass_ask:
+            if not bypass_ask:
                 print(f'Warning - file already exists at {data_path}, continuing could overwrite its data')
                 response = input('Continue? (y/n) ')
                 if response != 'Y' and response != 'y':
@@ -315,7 +399,7 @@ def simulate_and_save(data_path: Union[Path, str],
                     return
             os.remove(data_path)
     else:
-        if data_path.is_dir() and not by_pass_ask:
+        if data_path.is_dir() and not bypass_ask:
             print(f'Warning - folder already exists at {data_path}, continuing could overwrite its data')
             response = input('Continue? (y/n) ')
             if response != 'Y' and response != 'y':

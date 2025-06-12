@@ -49,7 +49,7 @@ def back_index_reduce(tensor: Tensor, index:torch.LongTensor, default_value:torc
 
         Parameters
         ----------
-        tensor : A1 x A2 X ... Am x D x  B1 x B2 X ... X Bn Tensor
+        tensor : A1 X A2 X ... Am X D X B1 X B2 X ... X Bn Tensor
             tensor to select from
         index : A1 x A2 x A3 X ... X Am X D torch.LongTensor
             tensor of indices to select from tensor A1.

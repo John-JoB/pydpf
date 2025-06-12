@@ -1,3 +1,4 @@
+"""Module for loading and saving files, not part of the public API"""
 import polars as pl
 from pathlib import Path
 from joblib import Parallel, delayed
@@ -10,20 +11,21 @@ def _load_directory_csv(
     *,
     processes=-1,
 ) -> Tuple[pl.DataFrame, pl.DataFrame]:
-    """
-    Load and concatenate CSV files from a directory into a single DataFrame.
+    """Load and concatenate CSV files from a directory into a single DataFrame.
 
     This function reads all CSV files in the specified directory, adds a
     'series_id' column to each DataFrame based on the file name, and then
     concatenates them into a single DataFrame. The resulting DataFrame is
     sorted by 'series_id', while retaining the order of other columns.
 
-    Parameters:
+    Parameters
+    ----------
     directory (Path): The path to the directory containing the CSV files.
     processes (int, optional): The number of processes to use for parallel
         reading. Defaults to -1, which means using all available processors.
 
-    Returns:
+    Returns
+    -------
     pl.DataFrame: A DataFrame containing data from all CSV files
     in the directory, with an added 'series_id' column.
     """
@@ -64,12 +66,14 @@ def _extract_tensor(
     """
     Extracts tensor data from a given DataFrame by selecting columns that match a specified prefix and grouping by a series ID column.
 
-    Parameters:
+    Parameters
+    ----------
     data (pl.DataFrame): The input DataFrame containing the data.
     prefix (str): The prefix of the columns we wish to extract.
     series_id_column (str): The column name used to group the data.
 
-    Returns:
+    Returns
+    -------
     np.ndarray: An AxBxC tensor, with the (a,b,c)th element being the cth element of the bth timestep of the ath series.
         A is the number of series (number of unique elements of the series_id_column),
         B is the number of timesteps in each series, must be the same for all series (no padding is implemented yet),
@@ -158,19 +162,3 @@ def load_data_csv(
     output_dict["tensor"] = np.concatenate(tensor_list, axis=-1)
 
     return output_dict
-
-'''
-TEST_PATH = Path(
-    "Dynamical systems (synthetic)/Lorenz 96/data/L96_SYSTEM_2024-11-06_12-20-32_25_DIM_STATE_5_DIM_OBS_WITH_80.0PERCENT_SPARSITY/simulated_data.csv"
-)
-
-test_loaded = load_data_csv(
-    TEST_PATH, state_prefix="state_", observation_prefix="observation_", time_column="t"
-)
-
-# first series of observations
-test_loaded["tensor"][:, :, test_loaded["indices"]["observation"]][0]
-
-# time data for 12th series
-test_loaded["tensor"][:, :, test_loaded["indices"]["observation"]][11]
-'''

@@ -1,28 +1,23 @@
-"""
-Python file to contain the functions for performing resampling.
+"""Python Module to contain the functions for performing resampling.
 
-For use with our filtering algorithms the resampling functions must take the particle positions and log normalised weights
-and return the resampled positions, resampled normalised weights.
-
-We keep the usual pytorch design pattern of passing parameters/hyperparameters at object creation. I.e. the top-level functions in this file
-are functions from the hyperparameters to a Callable with the above specified signature. In most cases the resampling algorithm has no trainable
-parameters, so the returned object is a simple python function, but if it does then the object is a Module with the forward() method implemented.
+Resamplers all subclass ``pydpf.Module``
 """
 import torch
 from torch import Tensor
-from typing import Tuple, Any, Optional
-from pydpf.utils import batched_select, normalise
-from pydpf.base import Module, cached_property
-from pydpf.custom_types import WeightedSample
+from typing import Tuple, Any
+from pydpf.utils import batched_select
+from pydpf.base import Module
 from pydpf import optimal_transport
-from math import sqrt
+from math import sqrt, log
+
+
 
 class MultinomialResampler(Module):
 
     def __init__(self, generator:torch.Generator):
-        """
-            Multinomial resampler.
+        """Multinomial resampler.
 
+            Resamples particles from the multinomial distribution. With
 
             Parameters
             ----------
@@ -35,42 +30,46 @@ class MultinomialResampler(Module):
         self.generator = generator
         self._need_weight_output = True
 
-    def forward(self, state:Tensor, weight:Tensor, **data) -> WeightedSample:
+    def forward(self, state:Tensor, weight:Tensor, **data):
         with torch.no_grad():
             sampled_indices = torch.multinomial(torch.exp(weight), weight.size(1), replacement=True, generator=self.generator).detach()
             self.cache['used_weight'] = weight
             self.cache['sampled_indices'] = sampled_indices
         if self._need_weight_output:
-            return batched_select(state, sampled_indices), torch.zeros_like(weight)
+            return batched_select(state, sampled_indices), torch.full(weight.size(), -log(weight.size(1)), device=weight.device, dtype=weight.dtype)
         return batched_select(state, sampled_indices)
 
 class SystematicResampler(Module):
+    """Systematic resampler.
+
+        Under systematic resampling, the expected number of times a given particle is resampled is the same as for multinomial resampling. But it
+        inter-correlates all the particles within a sample so it is difficult to provide the same theoretical guarantees on the asymptotic
+        behaviour of filters that use systematic resampling compared to multinomial resampling. However, the stability offered by systematic
+        resampling often results in better performance in practice.
+
+        Parameters
+        ----------
+        generator: torch.Generator
+            The generator to track the random state of the resampling process.
+
+        Notes
+        -----
+        Equivalent to the Systematic resampler described in [1]_. Systematic resampling was first proposed in [2]_.
+        Systematic resampling introduces strong dependence between particles and their index. Should the forward kernel be dependent on the
+        particle index then the particles should be shuffled after resampling.
+
+        References
+        ----------
+        .. [1] Chopin N, Papaspiliopoulos O (2020). An Introduction to Sequential Monte Carlo, chapter Importance Resampling, pp. 105–127. Springer.
+        .. [2] Carpenter J, Clifford P, Fearnhead P (1999). “Improved particle filter for nonlinear problems.” In IEE Proc. Radar, Sonar and Navi., volume 146.
+    """
     def __init__(self, generator:torch.Generator):
-        """
-            Systematic resampler. Equivalent to the Systematic resampler described in Chopin and Papaspiliopoulis 2020.
-
-            Under systematic resampling, the expected number of times a given particle is resampled is the same as for multinomial resampling. But it
-            inter-correlates all the particles within a sample so it is difficult to provide the same theoretical guarantees on the asymptotic
-            behaviour of filters that use systematic resampling compared to multinomial resampling. However, the stability offered by systematic
-            resampling often results in better performance in practice.
-
-            Warnings
-            ---------
-            Systematic resampling introduces strong dependence between particles and their index. Should the forward kernel be dependent on the
-            particle index then the particles should be shuffled after resampling.
-
-
-            Parameters
-            ----------
-            generator: torch.Generator
-                The generator to track the random state of the resampling process.
-        """
         super().__init__()
         self.cache = {}
         self.generator = generator
         self._need_weight_output = True
 
-    def forward(self, state:Tensor, weight:Tensor, **data) -> WeightedSample:
+    def forward(self, state:Tensor, weight:Tensor, **data):
         with torch.no_grad():
             offset = torch.rand((weight.size(0),), device=state.device, generator=self.generator)
             cum_probs = torch.cumsum(torch.exp(weight), dim=1)
@@ -83,32 +82,50 @@ class SystematicResampler(Module):
             self.cache['used_weight'] = weight
             self.cache['sampled_indices'] = sampled_indices
         if self._need_weight_output:
-            return batched_select(state, sampled_indices), torch.zeros_like(weight)
+            return batched_select(state, sampled_indices), torch.full(weight.size(), -log(weight.size(1)), device=weight.device, dtype=weight.dtype)
         return batched_select(state, sampled_indices)
 
 
 class SoftResampler(Module):
+    """Soft resampler.
+
+    Module for perfoming soft-resampling, (P. Karkus, D. Hsu and W. S. Lee 'Particle Filter Networks with Application to
+    Visual Localization' 2018).
+
+    Soft resampling allows gradients to be passed through resampling by inducing importance weights. This is done by instead drawing the
+    resampled particle from an alternative distribution and re-weighting the samples. The chosen alternative distribution is a mixture of
+    the target with probability a; and a uniform distribution over the particles, with probability 1-a.
+
+    The ``softness`` parameter, can be thought of as trading off between unbiased gradients (``softness`` = 0) and efficient resampling (``softness`` = 1). With
+    ``softness`` > 0, the resampled index depends (randomly) on the previous weights. The contribution to the gradient from this dependence is ignored.
+
+    Parameters
+    ----------
+    softness:  float
+        The trade-off parameter between unbiased gradients (``softness`` = 0) and efficient resampling (``softness`` = 1).
+    base_resampler: Module
+        The base resampler to use.
+    device: torch.device.
+        The device that filtering is performed on
+
+    Notes
+    -----
+    Proposed in [1]_. Like many of the resamplers in PyDPF this resampler acts on top of another resampler, generally this should be either ``MultinomialResampler``, ``SystematicResampler`` or ``OptimalTransportResampler``.
+    Stacking other resamplers should be done with great care and in the order: -- Resamplers that modify gradient computation above Resamplers that modify the weights above Resamplers that modify the distribution
+    for given weights) --. But it will nearly always be safer to define a new resampler with the desired behaviour than to stack exotic resamplers.
+
+    References
+    ----------
+    .. [1] Karkus P, Hsu D, Lee WS (2018). “Particle filter networks with application to visual localization.” In Proc. Conf. Robot Learn., pp. 169–178. PMLR, Zurich, CH.
+    """
+
+    def __new__(cls, softness:float, base_resampler:Module, device:torch.device):
+        if softness == 1:
+            return base_resampler
+        else:
+            return super().__new__(cls)
+
     def __init__(self, softness:float, base_resampler:Module, device:torch.device):
-        """
-            Module for perfoming soft-resampling, (P. Karkus, D. Hsu and W. S. Lee 'Particle Filter Networks with Application to
-            Visual Localization' 2018).
-
-            Soft resampling allows gradients to be passed through resampling by inducing importance weights. This is done by instead drawing the
-            resampled particle from an alternative distribution and re-weighting the samples. The chosen alternative distribution is a mixture of
-            the target with probability a; and a uniform distribution over the particles, with probability 1-a.
-
-            The softness parameter, a, can be thought of as trading off between unbiased gradients (a = 0) and efficient resampling (a = 1). With
-            a > 0, the resampled index depends (randomly) on the previous weights. The contribution to the gradient from this dependence is ignored.
-
-            The underlying resampling algorithm is systematic, see resampling.systematic for details.
-
-            Parameters
-            ----------
-            softness:  float
-                The trade-off parameter between
-            generator: torch.Generator
-                The generator to track the random state of the resampling process.
-        """
         super().__init__()
         self.cache = {}
         self.softness = softness
@@ -119,21 +136,20 @@ class SoftResampler(Module):
         self.resampler = base_resampler
         self._need_weight_output = True
 
-    def forward(self, state:Tensor, weight:Tensor, **data) -> WeightedSample:
-        soft_weight = torch.logaddexp(weight + self.log_softness, self.neg_log_softness - torch.log(torch.tensor(weight.size(1), device=state.device)))
+    def forward(self, state:Tensor, weight:Tensor, **data):
+        log_n = torch.log(torch.tensor(weight.size(1), device=state.device))
+        soft_weight = torch.logaddexp(weight + self.log_softness, self.neg_log_softness - log_n)
         state, output_weights = self.resampler(state, soft_weight)
         self.cache = self.resampler.cache
         if self._need_weight_output:
-            return state, batched_select(weight, self.cache['sampled_indices']) - batched_select(self.cache['used_weight'], self.cache['sampled_indices'])
+            return state, batched_select(weight, self.cache['sampled_indices']) - batched_select(self.cache['used_weight'], self.cache['sampled_indices']) - log_n
         return state
 
 
 class StopGradientResampler(Module):
-    '''
-    Module for  stop-gradient resampling, (A. Scibor and F. Wood 'Differentiable Particle Filtering without
-    Modifying the Forward Pass' 2021).
+    '''Stop-gradient resampling
 
-    Stop-gradient resampling uses the REINFORCE or score-based Monte-Carlo gradient technique. Unlike soft-resampling REINFORCE is unbiased.
+    Stop-gradient resampling uses the REINFORCE or score-based Monte-Carlo gradient technique applied at each time-step.
     For numerical stability our implementation attaches the gradients to the log-space weights, rather than the linear-space particles.
 
     Parameters
@@ -141,11 +157,16 @@ class StopGradientResampler(Module):
     generator: torch.Generator
         The generator to track the random state of the resampling process.
 
-    Returns
-    -------
-    SoftResampler: Resampler
-        The systematic resampling function.
+    Notes
+    -----
+    REINFORCE is unbiased after a single application but not so when applied in series as we do here when ``time_extent`` > 1.
+    Proposed in [1]_. Like many of the resamplers in PyDPF this resampler acts on top of another resampler, generally this should be either ``MultinomialResampler``, ``SystematicResampler`` or ``OptimalTransportResampler``.
+    Stacking other resamplers should be done with great care and in the order: -- Resamplers that modify gradient computation above Resamplers that modify the weights above Resamplers that modify the distribution
+    for given weights) --. But it will nearly always be safer to define a new resampler with the desired behaviour than to stack exotic resamplers.
 
+    References
+    ---------
+    .. [1] Scibior A, Wood F (2021). “Differentiable particle filtering without modifying the forward pass.” arXiv:2106.10314
     '''
     def __init__(self, base_resampler:Module):
         super().__init__()
@@ -153,13 +174,14 @@ class StopGradientResampler(Module):
         self.base_resampler = base_resampler
         self._need_weight_output = True
 
-    def forward(self, state:Tensor, weight:Tensor, **data) -> WeightedSample:
+    def forward(self, state:Tensor, weight:Tensor, **data):
 
         if self._need_weight_output and torch.is_grad_enabled():
             self.base_resampler._need_weight_output = False
             state = self.base_resampler(state, weight)
             resampled_weight = batched_select(self.base_resampler.cache['used_weight'], self.base_resampler.cache['sampled_indices'])
             self.cache = self.base_resampler.cache
+            self.cache['used_weight'] = self.cache['used_weight'].detach()
             return state, resampled_weight - resampled_weight.detach()
 
         if self._need_weight_output:
@@ -174,53 +196,44 @@ class StopGradientResampler(Module):
         return state
 
 class OptimalTransportResampler(Module):
+    r"""Optimal transport based resampling
 
+
+        Optimal transport resampling produces a differentiable deterministic transport map from the proposal distribution to the posterior.
+        This is achieved by finding the solution to an entropy regularised Kantorovich optimal transport problem between the two empirical
+        distributions. The particles are transformed by the resulting optimal map to obtain a new unweighted approximation of the posterior.
+
+
+        Parameters
+        ----------
+        regularisation: float
+            The minimum strength of the entropy regularisation, in our implementation regularisation automatically chosen per sample and
+             exponentially decayed to this value.
+        decay_rate: float
+            The factor by which to decrease the entropy regularisation per Sinkhorn loop.
+        min_update_size: float
+            The size of update to the transport potentials below which iteration should stop.
+        max_iterations: int
+            The maximum number iterations of the Sinkhorn loop, before stopping. Regardless of convergence.
+        transport_gradient_clip: float
+            The maximum per-element gradient of the transport matrix that should be passed. Higher valued gradients will be clipped to this value.
+
+        Notes
+        ----
+        Our implementation is closely based on the original code of Thornton and Corenflos, the following details being taken from theirs:
+        We exponentially decay the regularisation strength over the Sinkhorn iterations.
+        We chose the initial strength of the regularisation parameter to be equal to maximum value minus the minimum value in the particle-state 2D array of the particle positions after each dimension is normalised to standard deviation 1.
+        For numerical stability we cap the magnitude of the contribution to the gradient due to the transport matrix.
+
+        Optimal transport resampling places particles in new positions on :math:`\mathbb{R}^n`, so it cannot directly be applied when some component of
+        the state space is discrete/categorical.
+
+        Optimal transport resampling results in biased (but asymptotically consistent) estimates of all non-affine functions of the latent state.
+        Including the likelihood. The authors of the proposing paper investigate this effect and find it sufficiently small to ignore. See their
+        paper [1]_ for details.
+        """
 
     def __init__(self, regularisation: float, decay_rate: float, min_update_size: float, max_iterations: int, transport_gradient_clip: float):
-        r"""
-            Module for performing optimal transport resampling, (A. Corenflos, J. Thornton, G. Deligiannidis and A. Doucet
-            'Differentiable Particle Filtering via Entropy-Regularized Optimal Transport' 2021)
-
-            Optimal transport resampling produces a differentiable deterministic transport map from the proposal distribution to the posterior.
-            This is achieved by finding the solution to an entropy regularised Kantorovich optimal transport problem between the two empirical
-            distributions. The particles are transformed by the resulting optimal map to obtain a new unweighted approximation of the posterior.
-
-            Our implementation is closely based on the original code of Thornton and Corenflos, the following details being taken from theirs:
-            We anneal the regularisation strength over the Sinkhorn iterations.
-            We chose the initial strength of the regularisation parameter to be equal to maximum of the per-dimension standard deviations
-            of the particle positions.
-            For numerical stability we cap the magnitude of the contribution to the gradient due to the transport matrix.
-
-            Warnings
-            --------
-            Optimal transport resampling places particles in new positions on $\mathbb{R}^n$, so it cannot directly be applied when some component of
-            the state space is discrete/categorical.
-
-            Optimal transport resampling results in biased (but asymptotically consistent) estimates of all non-affine functions of the latent state.
-            Including the likelihood. The authors of the proposing paper investigate this effect and find it sufficiently small to ignore. See their
-            paper for details.
-
-
-            Parameters
-            ----------
-            regularisation: float
-                The maximum strength of the entropy regularisation, in our implementation regularisation automatically chosen per sample and
-                 annealed.
-            step_size: float
-                The factor by which to decrease the entropy regularisation per Sinkhorn loop.
-            min_update_size: float
-                The size of update to the transport potentials below which iteration should stop.
-            max_iterations: int
-                The maximum number iterations of the Sinkhorn loop, before stopping. Regardless of convergence.
-            transport_gradient_clip: float
-                The maximum per-element gradient of the transport matrix that should be passed. Higher valued gradients will be clipped to this value.
-
-            Returns
-            -------
-            OTResampler: Resampler
-                The optimal transport resampling function.
-
-            """
         super().__init__()
         self.cache = {}
         self.regularisation = regularisation
@@ -305,7 +318,7 @@ class OptimalTransportResampler(Module):
         return log_uniform_weight, cost_matrix, extent
 
 
-    def forward(self, state: Tensor, weight: Tensor, **data) -> WeightedSample:
+    def forward(self, state: Tensor, weight: Tensor, **data):
         N = state.size(1)
         log_b, cost, extent = self.get_sinkhorn_inputs_OT(N, weight, state)
         f, g, epsilon_used = optimal_transport.sinkhorn_loop(weight, log_b, cost, self.regularisation, self.min_update_size, self.max_iterations, extent.reshape(-1, 1, 1), self.decay_rate)
@@ -313,7 +326,7 @@ class OptimalTransportResampler(Module):
         transport = self.gradient_wrapper.apply(transport)
         self.cache['used_weight'] = weight
         if self._need_weight_output:
-            return optimal_transport.apply_transport(state, transport, N), torch.zeros_like(weight)
+            return optimal_transport.apply_transport(state, transport, N), torch.full(weight.size(), -log(weight.size(1)), device=weight.device, dtype=weight.dtype)
         return optimal_transport.apply_transport(state, transport, N)
 
 class KernelResampler(Module):
@@ -345,7 +358,7 @@ class KernelResampler(Module):
         self.cache = {}
         self._need_weight_output = True
 
-    def forward(self, state: Tensor, weight: Tensor, **data) -> WeightedSample:
+    def forward(self, state: Tensor, weight: Tensor, **data):
         new_state = self.mixture.sample(state, weight, sample_size=(state.size(1),))
         self.cache = self.mixture.resampler.cache
         # Save computation if gradient is not required
@@ -355,6 +368,6 @@ class KernelResampler(Module):
             return new_state, new_weight
 
         if self._need_weight_output:
-            return new_state, torch.zeros_like(weight)
+            return new_state, torch.full(weight.size(), -log(weight.size(1)), device=weight.device, dtype=weight.dtype)
 
         return new_state

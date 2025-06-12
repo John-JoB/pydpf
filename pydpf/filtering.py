@@ -210,8 +210,7 @@ class ParticleFilter(SIS):
 
     References
     ----------
-    .. [1] Chopin N, Papaspiliopoulos O (2020). An Introduction to Sequential Monte Carlo, chapter
-       Particle Filtering, pp. 129–165. Springer.
+    .. [1] Chopin N, Papaspiliopoulos O (2020). An Introduction to Sequential Monte Carlo, chapter Particle Filtering, pp. 129–165. Springer.
     """
     def __init__(self, resampler: Module = None, SSM: FilteringModel = None, *, use_REINFORCE_for_proposal:bool=False, use_REINFORCE_for_initial_proposal:bool=False) -> None:
         self.REINFORCE_i = use_REINFORCE_for_initial_proposal
@@ -693,6 +692,12 @@ class MarginalStopGradientDPF(MarginalParticleFilter):
     -----
     See [1]_. If ``use_REINFORCE_for_proposal`` is ``True`` then this DPF is as described in [1]_ and the proposal model cannot be learned. Otherwise, if the model is bootstrap it is as in [2]_, if
     the SSM has a proposal then this is a non-published scheme.
+
+    References
+    ----------
+    .. [1] Scibior A, Wood F (2021). “Differentiable particle filtering without modifying the forward pass.” arXiv:2106.10314
+
+    .. [2] Brady JJ, et al. (2024). “Differentiable Interacting Multiple Model Particle Filtering.” arXiv preprint arXiv:2410.00620.
     """
 
     def __init__(self,

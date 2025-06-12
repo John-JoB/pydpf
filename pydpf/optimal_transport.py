@@ -40,7 +40,7 @@ def apply_transport(x_t: Tensor, transport: Tensor, N: int) -> Tensor:
     Apply a transport matrix to a vector of particles
 
     Parameters
-    -------------
+    ----------
     x_t: (B,N,D) Tensor
         Particle locations to be transported
     transport: (B,M,N) Tensor
@@ -57,7 +57,7 @@ def opt_potential(log_a: Tensor, c_potential: Tensor, cost: Tensor, epsilon: Ten
         Calculates the update in the Sinkhorn loop for distribution b (either proposal or target)
 
         Parameters
-        -----------
+        ----------
         log_a: (B,N) Tensor
             log of the weights of distribution a
         c_potential: (B, N) Tensor
@@ -68,7 +68,7 @@ def opt_potential(log_a: Tensor, c_potential: Tensor, cost: Tensor, epsilon: Ten
             Regularising parameter
 
         Returns
-        -----------
+        -------
         n_potential: (B, M) pt.Tensor
             The updated potential of distribution b
 
@@ -92,7 +92,7 @@ def sinkhorn_loop(log_a: Tensor, log_b: Tensor, cost: Tensor, epsilon: float, th
     """Calculates the Sinkhorn potentials for entropy regularised optimal transport between two atomic distributions via the Sinkhorn algorithm
 
         Parameters
-        ---------------
+        ----------
         log_a: (B,M) Tensor
             log of the weights of the proposal distribution
         log_b: (B,N) Tensor
@@ -109,7 +109,7 @@ def sinkhorn_loop(log_a: Tensor, log_b: Tensor, cost: Tensor, epsilon: float, th
             The difference between the maximum and minimum value per batch in the state tensor.
 
         Returns
-        ---------------
+        -------
         f: (B,M) Tensor
             Potential on the proposal
         g: (B,N) Tensor

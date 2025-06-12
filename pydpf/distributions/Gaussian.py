@@ -54,7 +54,7 @@ class MultivariateGaussian(Distribution):
         return torch.linalg.inv_ex(self.cholesky_covariance)[0]
 
     @cached_property
-    def half_logdet_cov(self):
+    def half_log_det_cov(self):
         return torch.linalg.slogdet(self.cholesky_covariance)[1]
 
     def sample(self, sample_size: tuple[int,...]|None = None) -> Tensor:

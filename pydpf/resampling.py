@@ -168,7 +168,7 @@ class StopGradientResampler(Module):
     for given weights) --. But it will nearly always be safer to define a new resampler with the desired behaviour than to stack exotic resamplers.
 
     References
-    ---------
+    ----------
     .. [1] Scibior A, Wood F (2021). “Differentiable particle filtering without modifying the forward pass.” arXiv:2106.10314
     '''
     def __init__(self, base_resampler:Module):
@@ -223,7 +223,7 @@ class OptimalTransportResampler(Module):
             The maximum per-element gradient of the transport matrix that should be passed. Higher valued gradients will be clipped to this value.
 
         Notes
-        ----
+        -----
         Our implementation is closely based on the original code of Thornton and Corenflos, the following details being taken from theirs:
         We exponentially decay the regularisation strength over the Sinkhorn iterations.
         We chose the initial strength of the regularisation parameter to be equal to maximum value minus the minimum value in the particle-state 2D array of the particle positions after each dimension is normalised to standard deviation 1.
@@ -292,7 +292,7 @@ class OptimalTransportResampler(Module):
         Get the inputs to the Sinkhorn algorithm as used for OT resampling
 
         Parameters
-        -----------
+        ----------
         log_weights: (B,N) Tensor
             The particle weights
 
@@ -303,7 +303,7 @@ class OptimalTransportResampler(Module):
             The particle state
 
         Returns
-        -------------
+        -------
         log_uniform_weights: (B,N) Tensor
             A tensor of log(1/N)
 

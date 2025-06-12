@@ -1,5 +1,5 @@
 import torch
-from typing import Tuple, Callable
+from typing import Tuple
 from types import FunctionType
 from functools import update_wrapper
 import os
@@ -130,6 +130,7 @@ def multiple_unsqueeze(tensor: Tensor, n: int, dim: int = -1) -> Tensor:
     -------
     output : Tensor
         Unsqueezed tensor
+
     """
     if n == 0:
         return tensor

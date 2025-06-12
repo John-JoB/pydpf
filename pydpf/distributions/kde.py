@@ -8,7 +8,7 @@ from ..base import Module
 
 
 class CompoundDistribution(Distribution):
-    """A wrapper that concatenates several distributions into a single distribution object.
+    r"""A wrapper that concatenates several distributions into a single distribution object.
         Interdependence between the distributions is not permitted.
 
         Parameters

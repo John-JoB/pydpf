@@ -62,37 +62,37 @@ class FilteringModel(Module):
     For the observation_model: ``state``.
 
     If the components are not Distributions then they must be Modules with that will be accessed through specific methods. Not all of these methods need to be defined depending on the use case. Let B be the size of the
-    batch dimension, K be the size of the particle dimension, D-x be the size of the inherent dimension for data type x. Starred (*) arguments are always passed, unstarred arguments are only passed if they exist.
+    batch dimension, K be the size of the particle dimension, D-x be the size of the inherent dimension for data type x. Starred (\*) arguments are always passed, unstarred arguments are only passed if they exist.
 
     ``prior_model``:
 
-        ``log_density()`` Parameters: *state, time, control, series_metadata. Output: the probability density of the state, Tensor of size (B X K). Required for non-bootstrap filtering.
+        ``log_density()`` Parameters: \*state, time, control, series_metadata. Output: the probability density of the state, Tensor of size (B X K). Required for non-bootstrap filtering.
 
-        ``sample()`` Parameters: *batch_size := B, *n_particles := K, time, control, series_metadata. Output a sample from the prior, Tensor of size (B X K X D-state). Required for data generation and bootstrap filtering.
+        ``sample()`` Parameters: \*batch_size := B, \*n_particles := K, time, control, series_metadata. Output a sample from the prior, Tensor of size (B X K X D-state). Required for data generation and bootstrap filtering.
 
     ``dynamic_model``:
 
-        ``log_density()`` Parameters: *prev_state, *state, prev_time, time, control, series_metadata, *t. Output: the probability density of the state, Tensor of size (B X K). Required for non-bootstrap filtering.
+        ``log_density()`` Parameters: \*prev_state, \*state, prev_time, time, control, series_metadata, \*t. Output: the probability density of the state, Tensor of size (B X K). Required for non-bootstrap filtering.
 
-        ``sample()`` Parameters: *prev_state, prev_time, time, control, series_metadata, *t. Output: a sample from the dynamic model, Tensor of size (B X K X D-state). Required for data generation and bootstrap filtering.
+        ``sample()`` Parameters: \*prev_state, prev_time, time, control, series_metadata, \*t. Output: a sample from the dynamic model, Tensor of size (B X K X D-state). Required for data generation and bootstrap filtering.
 
     ``observation_model``:
 
-        ``score()`` Parameters: *state, *observation, prev_time, time, control, series_metadata, *t. Output: The score of an observation given the latent state, usually the log-density, Tensor fo size (B X K). Required for filtering.
+        ``score()`` Parameters: \*state, \*observation, prev_time, time, control, series_metadata, \*t. Output: The score of an observation given the latent state, usually the log-density, Tensor fo size (B X K). Required for filtering.
 
-        ``sample()`` Parameters: *state, prev_time, time, control, series_metadata, *t. Output: a sample from the dynamic model, Tensor of size (B X K X D-observation). Required for data generation.
+        ``sample()`` Parameters: \*state, prev_time, time, control, series_metadata, \*t. Output: a sample from the dynamic model, Tensor of size (B X K X D-observation). Required for data generation.
 
     ``inital_proposal_model``:
 
-        ``log_density()`` Parameters: *state, *observation, time, control, series_metadata. Output: the probability density of the state under the initial proposal, Tensor of size (B X K). Required for non-bootstrap filtering.
+        ``log_density()`` Parameters: \*state, \*observation, time, control, series_metadata. Output: the probability density of the state under the initial proposal, Tensor of size (B X K). Required for non-bootstrap filtering.
 
-        ``sample()`` Parameters: *batch_size := B, *n_particles := K, *observation, time, control, series_metadata. Output a sample from the initial proposal, Tensor of size (B X K X D-state). Required non-bootstrap filtering.
+        ``sample()`` Parameters: \*batch_size := B, \*n_particles := K, \*observation, time, control, series_metadata. Output a sample from the initial proposal, Tensor of size (B X K X D-state). Required non-bootstrap filtering.
 
     ``proposal_model``:
 
-        ``log_density()`` Parameters: *prev_state, *state, *observation, prev_time, time, control, series_metadata, *t. Output: the probability density of the state under the proposal, Tensor of size (B X K). Required for non-bootstrap filtering.
+        ``log_density()`` Parameters: \*prev_state, \*state, \*observation, prev_time, time, control, series_metadata, \*t. Output: the probability density of the state under the proposal, Tensor of size (B X K). Required for non-bootstrap filtering.
 
-        ``sample()`` Parameters: *prev_state, *observation, prev_time, time, control, series_metadata, *t. Output: a sample from the proposal model, Tensor of size (B X K X D-state). Required for non-bootstrap filtering.
+        ``sample()`` Parameters: \*prev_state, \*observation, prev_time, time, control, series_metadata, \*t. Output: a sample from the proposal model, Tensor of size (B X K X D-state). Required for non-bootstrap filtering.
 
 
     We check that the components have the components required for SIRS particle filtering. Additional components may be required depending on the loss function or when generating data and these will not be caught.

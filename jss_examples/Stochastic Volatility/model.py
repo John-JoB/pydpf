@@ -1,4 +1,4 @@
-import pydpf
+from pydpf import pydpf
 import torch
 
 class StochasticVolatility_Prior(pydpf.Module):
@@ -37,7 +37,7 @@ class StochasticVolatility_Observation(pydpf.Module):
     def __init__(self, beta, generator):
         super().__init__()
         self.beta_ = beta
-        self.dist = pydpf.MultivariateGaussian(mean=torch.zeros(1, device=generator.device), cholesky_covariance=torch.ones((1,1), device=generator.device), generator=generator)
+        self.dist = pydpf.MultivariateGaussian(mean=torch.zeros(1, device=generator.device), cholesky_covariance=torch.ones((1, 1), device=generator.device), generator=generator)
 
     def sample(self, state, **data):
         sample  = self.dist.sample((state.size(0),))

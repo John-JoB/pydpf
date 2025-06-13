@@ -1,0 +1,33 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "pydpf"
+description = "A package for differentiable particle filtering"
+version = "1.0.1"
+authors = [
+  {name = "John-Joseph Brady", email = "john-joseph.brady@kcl.ac.uk"},
+  {name = "Benjamin Cox", email = "benjamin.cox@ed.ac.uk"},
+]
+license = {file = "LICENSE"}
+dependencies = [
+            'torch>=2.3.1',
+            'torchaudio>=2.3.1',
+            'torchvision>=0.18.1',
+            'numpy>=1.26.4',
+            'numpydoc>=1.7.0',
+            'joblib>=1.4.2',
+            'pandas>=2.2.2',
+            'polars>=1.10'
+]
+requires-python = ">=3.12"
+
+[tool.setuptools]
+packages = ['pydpf', 'pydpf.distributions']
+include-package-data = true
+
+[project.optional-dependencies]
+data_preprocessing = [
+  "fastexcel",
+]

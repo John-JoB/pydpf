@@ -1,6 +1,6 @@
 
 import torch
-import pydpf
+from pydpf import pydpf
 import numpy as np
 from typing import Tuple
 from copy import deepcopy

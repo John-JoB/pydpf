@@ -1,6 +1,6 @@
 import torch
-import pydpf
-from math import floor, ceil
+from pydpf import pydpf
+from math import ceil
 from torch import Tensor
 from torch.nn.init import kaiming_uniform_, _calculate_fan_in_and_fan_out, uniform_
 import math

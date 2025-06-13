@@ -1,6 +1,6 @@
-import pydpf
+from pydpf import pydpf
 import torch
-from typing import Tuple, Union
+from typing import Tuple
 import numpy as np
 from copy import deepcopy
 

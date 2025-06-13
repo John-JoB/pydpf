@@ -1,5 +1,6 @@
 import torch
-import pydpf
+from pydpf import pydpf
+
 
 class MazePrior(pydpf.Module):
     def __init__(self, width, height, generator):

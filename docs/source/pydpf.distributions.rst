@@ -28,6 +28,14 @@ pydpf.distributions.kde module
    :undoc-members:
    :show-inheritance:
 
+pydpf.distributions.vonMises module
+------------------------------
+
+.. automodule:: pydpf.distributions.vonMises
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 Module contents
 ---------------
 

@@ -377,7 +377,7 @@ class MarginalParticleFilter(SIS):
 
 
     def forward(self, *args, **kwargs):
-        if self.optimise:
+        if self.optimise and not torch.is_grad_enabled():
             return self.PF.forward(*args, **kwargs)
         return super().forward(*args, **kwargs)
 
@@ -721,10 +721,8 @@ class KernelDPF(ParticleFilter):
     ----------
     SSM: FilteringModel
         A ``FilteringModel`` that represents the SSM (and optionally a proposal model). See the documentation of ``FilteringModel`` for more complete information.
-    resampling_generator: torch.Generator
-        Generator to track the resampling rng.
-    multinomial: bool. Default False.
-        If true then use multinomial resampling. Otherwise, use systematic resampling.
+    Kernel: KernelMixture
+        The Kernel mixture to resample from.
     use_REINFORCE_for_proposal: bool. Default False.
         Whether to use the REINFORCE estimator for the gradient due to the particle proposal process.
     use_REINFORCE_for_initial_proposal: bool. Default False.

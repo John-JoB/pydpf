@@ -29,8 +29,8 @@ class CompoundDistribution(Distribution):
     """
     conditional = False
 
-    def __init__(self, distributions: list[Distribution|Module, ...], generator):
-        super().__init__(torch.default_generator)
+    def __init__(self, distributions: list[Distribution|Module], generator):
+        super().__init__(generator)
         self.dists = distributions
         self.dim = 0
         #register submodules
@@ -125,7 +125,7 @@ class KernelMixture(Distribution):
     """
     conditional = True
 
-    def __init__(self, kernel: list[Distribution|Module], generator: Union[torch.Generator, None]):
+    def __init__(self, kernel: Distribution|Module, generator: Union[torch.Generator, None]):
         super().__init__(generator)
         self.resampler = MultinomialResampler(generator=generator)
         if not isinstance(kernel, Distribution):

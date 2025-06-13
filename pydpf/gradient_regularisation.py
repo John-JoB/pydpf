@@ -93,6 +93,7 @@ def TBPTT(propagation_length: int):
         def apply(state: Tensor, weight: Tensor, time_data: dict):
             if time_data['t'] % propagation_length == 0:
                 return state.detach(), weight.detach()
+            return state, weight
 
     return _TBPTT
 

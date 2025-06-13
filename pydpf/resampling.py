@@ -365,7 +365,7 @@ class KernelResampler(Module):
 
     def forward(self, state: Tensor, weight: Tensor, **data):
         """Run the kernel transport resampler."""
-        with torch.no_grad:
+        with torch.no_grad():
             new_state = self.mixture.sample(state, weight, sample_size=(state.size(1),))
             self.cache = self.mixture.resampler.cache
         # Save computation if gradient is not required

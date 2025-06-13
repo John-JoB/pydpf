@@ -30,6 +30,9 @@ class ConditionalResampler(Module):
     def _mask_data(self, mask, **data):
         masked_data = {}
         for k, v in data.items():
+            if k == "t":
+                masked_data[k] = v
+                continue
             masked_data[k] = v[mask]
         return masked_data
 
@@ -69,7 +72,7 @@ class ConditionalResampler(Module):
         out_weight[resample_mask] = resampled_weight
         self.cache = self.resampler.cache
         t = weight.clone()
-        t[resample_mask] = self.cache['used_weight'][resample_mask]
+        t[resample_mask] = self.cache['used_weight']
         self.cache['used_weight'] = t
         self.cache['mask'] = resample_mask
         return out_state, out_weight

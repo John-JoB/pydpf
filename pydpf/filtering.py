@@ -564,9 +564,7 @@ class SoftDPF(ParticleFilter):
     -----
     Applies a non-target proposal to resampling, replace the resampling weights :math:`w^{i}_{t}` with:
 
-    .. math::
-
-        (\text{softness}) w^{i}_{t} + \frac{(1-\text{softness})}{\text{n_particles}}
+    .. math:: (\text{softness}) w^{i}_{t} + \frac{(1-\text{softness})}{\text{n_particles}}
 
     With ``softness`` = 1 then this is equivelent to the straight-through estimator used in [2]_.
 

@@ -5,7 +5,8 @@ Installation
 ============
 PyDPF can be be installed by running:
 
-.. code-block::
+.. code-block:: python
+
     pip install pydpf
 
 PyDPF basics
@@ -34,7 +35,8 @@ We provide the following minimal example that shows how one might implement a Py
 module that evaluates the probability density function of a Gaussian where the mean and
 variance are parameters.
 
-.. code-block::
+.. code-block:: python
+
     class GaussianDensity(pydpf.Module):
 
         log_2pi = log(2*pi)
@@ -132,7 +134,8 @@ collate function will not return the data in a format that obeys PyDPF conventio
 looping over the data loader, data is returned as tuple in the ordering state - observation -
 time - control - series_metadata with only the field that exist being returned.
 
-.. code-block::
+.. code-block:: python
+
     dataset = pydpf.StateSpaceDataset(data_path=data_path,
                                         series_id_column='series_id',
                                         state_prefix='state',

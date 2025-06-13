@@ -240,11 +240,6 @@ class ConditionalGaussian(Distribution):
         If cholesky_covariance is a fuction and force_diagonal is True, it should take an arbitrary conditioning Tensor and output a BxD Tensor where the last dimension contains the standard deviations of the sample dimensions,
         and B is zero or more batch dimensions.
 
-        Notes
-        ------
-        In the most general case, repeatedly computing large batches of matrix determinants and inverses is slow. We implement optimised routines for the special cases that the covariance is constant or that it is diagonal.
-        If the user's problem does not fit these cases but has other structure that can be taken advantage of it is recommended that they implement a custom sampling proceedure rather than use this.
-
         Parameters
         ----------
         mean: Callable|Tensor
@@ -259,6 +254,12 @@ class ConditionalGaussian(Distribution):
             If both the mean and the covariance are given as functions, then the device of the distribution must be provided, otherwise it is inferred from the constant parameters.
         generator : torch.Generator
             The generator to control the rng when sampling.
+
+
+        Notes
+        -----
+        In the most general case, repeatedly computing large batches of matrix determinants and inverses is slow. We implement optimised routines for the special cases that the covariance is constant or that it is diagonal.
+        If the user's problem does not fit these cases but has other structure that can be taken advantage of it is recommended that they implement a custom sampling proceedure rather than use this.
         """
 
     def __new__(cls, mean: Callable|Tensor,

@@ -7,7 +7,7 @@ def get_transport_from_potentials(log_a: Tensor, log_b: Tensor, cost: Tensor, f:
     """Calculates the transport matrix from the Sinkhorn potentials
 
     Parameters
-    ------------
+    ----------
     log_a: (B,M) Tensor
             log of the weights of the proposal distribution
     log_b: (B,N) Tensor
@@ -22,7 +22,7 @@ def get_transport_from_potentials(log_a: Tensor, log_b: Tensor, cost: Tensor, f:
         Regularising parameter
 
     Returns
-    ---------
+    -------
     T: (B,M,N) Tensor
         The transport matrix
     """

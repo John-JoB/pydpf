@@ -353,7 +353,7 @@ def simulate_and_save(data_path: Union[Path, str],
         SSM: FilteringModel
             The state-space model to simulate from.
         time_extent: int
-            The amount of time steps to simulate per-trajectory excluding ``t=0``. Taking ``time_extent = T`` generates data at time-steps :math:`t \in \[0,\dots,T]`
+            The amount of time steps to simulate per-trajectory excluding ``t=0``. Taking ``time_extent = T`` generates data at time-steps :math:`t \in [0,\dots,T]`
         n_trajectories: int
             The number of the trajectories to simulate.
         batch_size: int

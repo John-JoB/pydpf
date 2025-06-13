@@ -340,14 +340,14 @@ class MarginalParticleFilter(SIS):
 
     Notes
     -----
-        The marginal particle filter is a special case of the SIS algorithm. The unlike standard particle filter the marginal particle filter considers resampling in its evaluation of the proposal distribution by
-        accounting for the possibility that any new particle could have been derived from any particle at the previous time-step instead of only considering it's genealogical path. This is done by marginalising over the
-        ancestral indices at each time-step, hence the name. [1]_
+    The marginal particle filter is a special case of the SIS algorithm. The unlike standard particle filter the marginal particle filter considers resampling in its evaluation of the proposal distribution by
+    accounting for the possibility that any new particle could have been derived from any particle at the previous time-step instead of only considering it's genealogical path. This is done by marginalising over the
+    ancestral indices at each time-step, hence the name. [1]_
 
-        The optimisations taken when ``optimise_for_bootstrap`` is True are only valid if the algorithm is truly bootstrap aside from the first time-step, i.e. the proposal and resampling both do not induce importance
-        weights. However, it is permitted for ``SSM.initial_proposal_model`` to be non-bootstrap. If ``SSM.proposal_model`` is non-None then this is detected and the value of ``optimise_for_bootstrap`` is ignored.
-        However, there is no efficient way to detect if the resampler modifies the weights so it is on the user to manually set ``optimise_for_bootstrap`` to False in this case, otherwise this filter will silently use
-        an algorithm with undefined behaviour.
+    The optimisations taken when ``optimise_for_bootstrap`` is True are only valid if the algorithm is truly bootstrap aside from the first time-step, i.e. the proposal and resampling both do not induce importance
+    weights. However, it is permitted for ``SSM.initial_proposal_model`` to be non-bootstrap. If ``SSM.proposal_model`` is non-None then this is detected and the value of ``optimise_for_bootstrap`` is ignored.
+    However, there is no efficient way to detect if the resampler modifies the weights so it is on the user to manually set ``optimise_for_bootstrap`` to False in this case, otherwise this filter will silently use
+    an algorithm with undefined behaviour.
 
     .. warning:: Setting the parameter ``optimise_for_bootstrap`` to True can silently invoke undefined behaviour if the resampler is non-standard, see the Notes section for detail.
 
@@ -522,7 +522,7 @@ class DPF(ParticleFilter):
 
         Notes
         -----
-        This DPF does not use a differentiable resampling method, instead the gradients are detached at each time-step. See ^[1]_ for detail.
+        This DPF does not use a differentiable resampling method, instead the gradients are detached at each time-step. See [1]_ for detail.
 
         References
         ----------
@@ -564,7 +564,9 @@ class SoftDPF(ParticleFilter):
     -----
     Applies a non-target proposal to resampling, replace the resampling weights :math:`w^{i}_{t}` with:
 
-    .. math:: (\text{softness}) w^{i}_{t} + \frac{(1-\text{softness})}{\text{n_particles}}
+    .. math::
+
+        (\text{softness}) w^{i}_{t} + \frac{(1-\text{softness})}{\text{n_particles}}
 
     With ``softness`` = 1 then this is equivelent to the straight-through estimator used in [2]_.
 

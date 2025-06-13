@@ -29,7 +29,7 @@ pydpf.distributions.kde module
    :show-inheritance:
 
 pydpf.distributions.vonMises module
-------------------------------
+-----------------------------------
 
 .. automodule:: pydpf.distributions.vonMises
    :members:

@@ -2,13 +2,14 @@ import sys
 import os
 project = 'pydpf'
 author = 'John-Joseph Brady'
-version = '1.0.0'
+version = '1.0'
 release = '1.0.0'
-extensions = ['numpydoc', 'autodoc', 'sphinx.ext.mathjax', 'sphinx_rtd_theme']
+extensions = ['numpydoc', 'autodoc', 'sphinx.ext.mathjax', 'sphinx_rtd_theme', 'sphinx.ext.coverage',]
 autodoc_mock_imports = ['joblib', 'torch', 'numpy', 'polars', 'pandas', 'pydpf']
 master_doc = 'index'
 numpydoc_show_class_members = False
 html_theme = "pydata_sphinx_theme"
+pygments_style = 'sphinx'
 
 html_theme_options = {
     'logo': {

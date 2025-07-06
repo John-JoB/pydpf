@@ -4,7 +4,7 @@ project = 'pydpf'
 author = 'John-Joseph Brady'
 version = '1.0'
 release = '1.0.0'
-extensions = ['numpydoc', 'autodoc', 'sphinx.ext.mathjax', 'sphinx_rtd_theme', 'sphinx.ext.coverage',]
+extensions = ['numpydoc', 'autodoc', 'sphinx.ext.mathjax', 'sphinx_rtd_theme', 'sphinx.ext.coverage']
 autodoc_mock_imports = ['joblib', 'torch', 'numpy', 'polars', 'pandas']
 master_doc = 'index'
 numpydoc_show_class_members = False
@@ -41,5 +41,4 @@ html_theme_options = {
     ],
 }
 
-sys.path.insert(0, os.path.abspath('../../pydpf/pydpf/'))
-sys.path.append(os.path.abspath('../..'))
+sys.path.insert(0, os.path.abspath('../../pydpf/'))

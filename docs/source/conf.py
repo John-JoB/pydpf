@@ -22,7 +22,7 @@ html_theme_options = {
     'navbar_align': 'left',
     # Move `sphinx-version` from start to center to shrink the footer.
     'footer_start': ['sphinx-version'],
-    'use_edit_page_button': True,
+    'use_edit_page_button': False,
     'header_links_before_dropdown': 6,
     'icon_links_label': 'Quick Links',
     'icon_links': [

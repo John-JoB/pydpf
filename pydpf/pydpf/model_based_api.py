@@ -62,7 +62,7 @@ class FilteringModel(Module):
     For the observation_model: ``state``.
 
     If the components are not Distributions then they must be Modules with that will be accessed through specific methods. Not all of these methods need to be defined depending on the use case. Let B be the size of the
-    batch dimension, K be the size of the particle dimension, D-x be the size of the inherent dimension for data type x. Starred (\*) arguments are always passed, unstarred arguments are only passed if they exist.
+    batch dimension, K be the size of the particle dimension, D-x be the size of the inherent dimension for data type x. Starred arguments are always passed, unstarred arguments are only passed if they exist.
 
     ``prior_model``:
 

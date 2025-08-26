@@ -7,7 +7,7 @@ Submodules
 pydpf.distributions.Gaussian module
 -----------------------------------
 
-.. automodule:: pydpf.distributions.Gaussian
+.. automodule:: distributions.Gaussian
    :members:
    :undoc-members:
    :show-inheritance:

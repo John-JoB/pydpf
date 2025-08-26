@@ -1,4 +1,4 @@
-from pydpf import pydpf
+import pydpf
 import torch
 
 class GaussianDynamic(pydpf.Module):

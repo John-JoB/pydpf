@@ -5,9 +5,9 @@ Resamplers all subclass ``pydpf.Module``
 import torch
 from torch import Tensor
 from typing import Tuple, Any
-from pydpf.pydpf.utils import batched_select
-from pydpf.pydpf.base import Module
-from pydpf.pydpf import optimal_transport
+from .utils import batched_select
+from .base import Module
+from . import optimal_transport
 from math import sqrt, log
 
 

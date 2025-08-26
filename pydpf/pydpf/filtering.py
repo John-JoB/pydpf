@@ -15,7 +15,6 @@ from typing import Callable
 
 
 
-
 class SIS(Module):
     """Module that represents a sequential importance sampling (SIS) algorithm. A SIS algorthm is fully specified by its importance sampling
         procedures, the user should supply a proposal kernel that may depend on the time-step; and a special case for time 0.

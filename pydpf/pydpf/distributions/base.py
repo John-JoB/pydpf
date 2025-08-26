@@ -1,10 +1,10 @@
 
-from pydpf.pydpf.base import Module
+from ..base import Module
 from abc import ABCMeta, abstractmethod
 from typing import Union, Tuple
 import torch
 from torch import Tensor
-from pydpf.pydpf.utils import multiple_unsqueeze
+from ..utils import multiple_unsqueeze
 
 
 class Distribution(Module, metaclass=ABCMeta):

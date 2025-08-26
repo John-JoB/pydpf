@@ -42,4 +42,6 @@ html_theme_options = {
 }
 
 
-sys.path.insert(0, os.path.abspath('../../pydpf/pydpf'))
+sys.path.insert(0, os.path.abspath('../../pydpf/pydpf/'))
+sys.path.insert(0, os.path.abspath('../../pydpf/'))
+sys.path.insert(0, os.path.abspath('../../pydpf/pydpf/distributions/'))

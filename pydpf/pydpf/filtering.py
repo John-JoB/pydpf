@@ -4,7 +4,7 @@ import torch
 from torch import Tensor
 from .utils import normalise
 from .base import Module
-from pydpf.pydpf.resampling import SystematicResampler, SoftResampler, OptimalTransportResampler, StopGradientResampler, KernelResampler, MultinomialResampler
+from .resampling import SystematicResampler, SoftResampler, OptimalTransportResampler, StopGradientResampler, KernelResampler, MultinomialResampler
 from .distributions import KernelMixture
 from .model_based_api import FilteringModel
 from .base import DivergenceError

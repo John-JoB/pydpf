@@ -39,7 +39,7 @@ def batched_select(tensor: Tensor, index: torch.LongTensor) -> Tensor:
         return torch.gather(input =tensor, index=index, dim=index_dim-1)
     raise ValueError('index cannot have more dimensions than tensor')
 
-def back_index_reduce(tensor: Tensor, index:torch.LongTensor, default_value:torch.Tensor | float = 0., min_entries: int = 0, reduction = 'sum') -> Tensor:
+def back_index_reduce(tensor: Tensor, index:torch.LongTensor, default_value: float = 0., min_entries: int = 0, reduction = 'sum') -> Tensor:
     """
         Acts in the reverse direction to batched_select, applies a reduction over all elements in tensor with the same index.
         Use to select along the mth dimension of tensor.

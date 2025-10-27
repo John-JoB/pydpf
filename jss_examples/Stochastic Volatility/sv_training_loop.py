@@ -1,4 +1,4 @@
-from pydpf import pydpf
+import pydpf
 import torch
 from typing import Tuple
 import numpy as np
@@ -32,7 +32,8 @@ def train(dpf,
           gradient_regulariser = None,
           target:str = 'MSE',
           time_extent = None,
-          lr_scheduler = None
+          lr_scheduler = None,
+          clamp = False
           ):
 
     batch_size = list(batch_size)
@@ -52,7 +53,8 @@ def train(dpf,
     validation_loader = torch.utils.data.DataLoader(validation_set, batch_size=batch_size[1], shuffle=False, generator=data_loading_generator, collate_fn=dataset.collate)
     test_loader = torch.utils.data.DataLoader(test_set, batch_size=batch_size[2], shuffle=False, generator=data_loading_generator, collate_fn=dataset.collate)
     best_eval = torch.inf
-    best_dict = None
+    dpf.update()
+    best_dict = deepcopy(dpf.state_dict())
     if time_extent is None:
         time_extent = dataset.observation.size(0)-1
     for epoch in range(epochs):
@@ -66,6 +68,8 @@ def train(dpf,
             loss = dpf(n_particles[0], time_extent, aggregation_function, observation=observation, ground_truth=state, gradient_regulariser = gradient_regulariser)
             loss = torch.mean(loss['ELBO'])*likelihood_scaling + (1-likelihood_scaling)*torch.mean(loss['MSE'])
             loss.backward()
+            for p in dpf.parameters():
+                torch.clamp_(p.grad, -1., 1.)
             train_loss.append(loss.item()*state.size(1))
             opt.step()
             total_size += state.size(1)
@@ -86,17 +90,21 @@ def train(dpf,
             validation_MSE= np.sum((np.array(validation_MSE))) / total_size
             validation_ELBO = np.sum((np.array(validation_ELBO))) / total_size
 
+        if np.isnan(validation_MSE) or np.isnan(validation_ELBO):
+            dpf.load_state_dict(best_dict)
+            continue
         if target=='MSE':
-            if validation_MSE < best_eval:
+            if validation_MSE < best_eval and not np.isnan(validation_MSE):
                 best_eval = validation_MSE
+
                 best_dict = deepcopy(dpf.state_dict())
         else:
-            if validation_ELBO < best_eval:
+            if validation_ELBO < best_eval and not np.isnan(validation_ELBO):
                 best_eval = validation_ELBO
                 best_dict = deepcopy(dpf.state_dict())
 
 
-        print(f'epoch {epoch + 1}/{epochs}, train loss: {train_loss}, validation MSE: {validation_MSE}, validation ELBO: {validation_ELBO}')
+        print(f'epoch {epoch + 1}/{epochs}, train loss: {train_loss}, validation MSE: {validation_MSE}, validation ELBO: {-validation_ELBO}')
     total_size = 0
     with torch.inference_mode():
         test_MSE = []
@@ -110,5 +118,5 @@ def train(dpf,
     test_MSE = np.sum((np.array(test_MSE))) / total_size
     test_ELBO = np.sum((np.array(test_ELBO))) / total_size
     print('')
-    print(f'test MSE: {test_MSE}, test ELBO: {test_ELBO}')
-    return test_MSE, test_ELBO
+    print(f'test MSE: {test_MSE}, test ELBO: {-test_ELBO}')
+    return test_MSE, -test_ELBO

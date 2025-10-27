@@ -1,5 +1,5 @@
 import torch
-from pydpf import pydpf
+import pydpf
 from math import ceil
 from torch import Tensor
 from torch.nn.init import kaiming_uniform_, _calculate_fan_in_and_fan_out, uniform_

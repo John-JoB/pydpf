@@ -48,9 +48,10 @@ def _load_series_metadata_csv(file: Path):
     series_metadata = pl.read_csv(file)
     try:
         series_metadata.get_column('series_id')
-        series_metadata = series_metadata.sort('series_id', ascending=True)
+        series_metadata = series_metadata.sort('series_id', descending=False)
+        series_metadata = series_metadata.drop('series_id')
     except:
-        series_metadata.with_row_index('series_id', 1)
+        pass
     return series_metadata
 
 

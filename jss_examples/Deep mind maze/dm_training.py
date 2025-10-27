@@ -1,6 +1,6 @@
 
 import torch
-from pydpf import pydpf
+import pydpf
 import numpy as np
 from typing import Tuple
 from copy import deepcopy
@@ -180,5 +180,5 @@ def train(dpf,
     test_angle_MSE = np.sum((np.array(test_angle_MSE))) / total_size
     print('')
     print(f'test position RMSE: {np.sqrt(test_Pos_MSE)}, test angle RMSE: {np.sqrt(test_angle_MSE)}')
-    print(f'Final time = {start_time - time.time()}')
+    print(f'Final time = {time.time() - start_time}')
     return test_Pos_MSE, test_angle_MSE

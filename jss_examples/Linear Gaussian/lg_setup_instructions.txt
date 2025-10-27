@@ -1,0 +1,13 @@
+Set up instructions for all linear gaussian experiments, this only needs to be performed once to run both experiments.
+If using the file structure as obtained from cloning our github repo, only step 2 is required.
+
+1. Ensure that there is a directory containing all the following files:
+    lg_setup.py
+    lg_model.py
+    "Comparison with the Kalman filter.ipynb"
+    "Learning proposal parameters.ipynb"
+
+2. Run the command "python -m lg_setup.py".
+    This command takes the optional command line options --dx, --dy and --batch_size.
+    The parameters --dx, --dy are the dimensions of the state and observations respectively. Defaults dx = 25, dy = 1 are as in the paper.
+    --batch_size determines the batch_size to use when generating simulated trajectories.

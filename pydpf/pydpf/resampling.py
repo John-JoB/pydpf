@@ -181,12 +181,12 @@ class StopGradientResampler(Module):
         """Run the stop-gradient resampler"""
 
         if self._need_weight_output and torch.is_grad_enabled():
-            self.base_resampler._need_weight_output = False
-            state = self.base_resampler(state, weight)
+            self.base_resampler._need_weight_output = True
+            state, new_weight = self.base_resampler(state, weight)
             resampled_weight = batched_select(self.base_resampler.cache['used_weight'], self.base_resampler.cache['sampled_indices'])
             self.cache = self.base_resampler.cache
             self.cache['used_weight'] = self.cache['used_weight'].detach()
-            return state, resampled_weight - resampled_weight.detach()
+            return state, new_weight + resampled_weight - resampled_weight.detach()
 
         if self._need_weight_output:
             self.base_resampler._need_weight_output = True

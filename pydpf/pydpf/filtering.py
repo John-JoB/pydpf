@@ -12,6 +12,8 @@ from warnings import warn
 from .conditional_resampling import ConditionalResampler
 from copy import copy
 from typing import Callable
+from math import log
+
 
 
 
@@ -142,7 +144,6 @@ class SIS(Module):
             gt_exists = True
         time_data = self._get_time_data(0, observation = observation, control = control, time = time, series_metadata = series_metadata)
         state, weight, likelihood = self.initial_proposal(n_particles = n_particles, **time_data)
-        likelihood = likelihood - torch.log(torch.tensor(n_particles, dtype=torch.float32, device=observation.device))
 
         if output_dict:
             output = {}
@@ -307,16 +308,27 @@ class ParticleFilter(SIS):
         def initial_sampler(n_particles: int, **data):
             state, weight = prior(n_particles=n_particles, **data)
             weight, likelihood = normalise(weight)
-            return state, weight, likelihood
+            return state, weight, likelihood - log(state.size(1))
 
-        def pf_sampler(prev_state, prev_weight, **data):
-            resampled_x, resampled_w = self.resampler(prev_state, prev_weight, **data)
-            state, weight = prop(prev_state=resampled_x, prev_weight=resampled_w, **data)
-            try:
-                weight, likelihood = normalise(weight)
-            except ValueError:
-                raise DivergenceError('Found batch where all weights are small.')
-            return state, weight, likelihood
+        if isinstance(self.resampler, ConditionalResampler):
+            def pf_sampler(prev_state, prev_weight, **data):
+                resampled_x, resampled_w = self.resampler(prev_state, prev_weight, **data)
+                state, weight = prop(prev_state=resampled_x, prev_weight=resampled_w, **data)
+                try:
+                    weight, likelihood = normalise(weight)
+                    likelihood = torch.where(self.resampler.cache['mask'], likelihood, normalise(weight - resampled_w)[1] - log(state.size(1)))
+                except ValueError:
+                    raise DivergenceError('Found batch where all weights are small.')
+                return state, weight, likelihood
+        else:
+            def pf_sampler(prev_state, prev_weight, **data):
+                resampled_x, resampled_w = self.resampler(prev_state, prev_weight, **data)
+                state, weight = prop(prev_state=resampled_x, prev_weight=resampled_w, **data)
+                try:
+                    weight, likelihood = normalise(weight)
+                except ValueError:
+                    raise DivergenceError('Found batch where all weights are small.')
+                return state, weight, likelihood
         super()._register_functions(initial_sampler, pf_sampler)
 
 
@@ -447,7 +459,7 @@ class MarginalParticleFilter(SIS):
                         weight = (torch.logsumexp(prev_weight.unsqueeze(1) + dynamic_log_density, dim=-1)
                                   - torch.logsumexp(used_weight.unsqueeze(1) + dynamic_log_density, dim=-1)
                                   + obs_score)
-                        return state, weight, obs_score, 0, 0, resampled_weight
+                        return state, weight, obs_score, dynamic_log_density, dynamic_log_density, resampled_weight
                 else:
                     def prop(prev_state, prev_weight, observation, **data):
                         resampled_state, resampled_weight = resampler(prev_state, prev_weight, **data)
@@ -460,7 +472,7 @@ class MarginalParticleFilter(SIS):
                         weight = (torch.logsumexp(prev_weight.unsqueeze(1) + dynamic_log_density, dim=-1)
                                   - torch.logsumexp(used_weight.unsqueeze(1) + dynamic_log_density, dim=-1)
                                   + obs_score)
-                        return state, weight, obs_score, 0, 0, resampled_weight
+                        return state, weight, obs_score, dynamic_log_density, dynamic_log_density, resampled_weight
 
         return prop
 
@@ -478,14 +490,16 @@ class MarginalParticleFilter(SIS):
         def initial_sampler(n_particles: int, **data):
             state, weight = prior(n_particles=n_particles, **data)
             weight, likelihood = normalise(weight)
-            return state, weight, likelihood
+            return state, weight, likelihood - log(state.size(1))
 
         if isinstance(self.resampler, ConditionalResampler):
             def mpf_sampler(prev_state, prev_weight, observation, **data):
                 state, weight, obs_score, dynamic_log_density, proposal_log_density, resampled_weight = prop(prev_state, prev_weight, observation, **data)
-                weight = torch.where(self.resampler.cache['mask'], weight, resampled_weight + obs_score + torch.diag(dynamic_log_density) - torch.diag(proposal_log_density))
+                score = obs_score + torch.diag(dynamic_log_density) - torch.diag(proposal_log_density)
+                weight = torch.where(self.resampler.cache['mask'], weight, resampled_weight + score)
                 try:
                     weight, likelihood = normalise(weight)
+                    likelihood = torch.where(self.resampler.cache['mask'], likelihood, normalise(score)[1])  - log(state.size(1))
                 except ValueError:
                     raise DivergenceError('Found batch where all weights are small.')
 
@@ -497,7 +511,7 @@ class MarginalParticleFilter(SIS):
                     weight, likelihood = normalise(weight)
                 except ValueError:
                     raise DivergenceError('Found batch where all weights are small.')
-                return state, weight, likelihood
+                return state, weight, likelihood - log(state.size(1))
 
         super()._register_functions(initial_sampler, mpf_sampler)
 

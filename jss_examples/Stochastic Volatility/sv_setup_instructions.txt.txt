@@ -1,0 +1,18 @@
+Set up instructions for all stochastic volatility experiments, this only needs to be performed once to run all three experiments.
+If using the file structure as obtained from cloning our github repo, only step 2 is required.
+
+1. Ensure that there is a directory containing all the following files:
+    sv_setup.py
+    sv_model.py
+    sv_training_loop.py
+    "Unsupervised learning of multiple parameters.ipynb"
+    "Performing filtering given a fully specified model.ipynb"
+    "Unsupervised learning of a single parameter.ipynb"
+
+2. Run the command "python -m sv_setup.py".
+    This command takes the optional command line options --alpha, --beta, --sigma and --batch_size.
+    The parameters --alpha, --beta and --sigma set the true parameters for the simulated data used in the "Performing filtering given a fully specified model" experiment, defaults are as in the paper.
+    --batch_size determines the batch_size to use when generating simulated trajectories.
+
+3. The "Unsupervised learning of a single parameter" experiment, additionally requires the that the datafile "test_trajectory.csv" found in our github (https://github.com/John-JoB/pydpf/tree/main) be downloaded and placed
+    /data/ directory created by sv_setup.py.

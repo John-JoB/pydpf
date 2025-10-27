@@ -1,0 +1,13 @@
+Set up instructions for the DeepMind maze experiment.
+If using the file structure as obtained from cloning our github repo, only step 2 is required.
+
+1. Ensure that there is a directory containing all the following files:
+    dm_model.py
+    dm_setup.py
+    dm_training.py
+    dm_neural_networks.py
+
+2. Run the command "python -m lg_setup.py" to download and pre-process the dataset.
+    You may specify the optional flag --delete_raw, which if set will delete the unprocessed data when the program completes.
+    The dataset is provided zipped with other datasets so the full file is large and requires ~5GB of available space to download.
+    The final processed dataset occupies ~1.2GB.

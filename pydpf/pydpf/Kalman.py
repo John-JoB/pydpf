@@ -106,7 +106,7 @@ class KalmanFilter(Module):
         likelihood_factors[0] = self._Gaussian_log_density(observation_mean, observation_covariance, observation[0])
 
         for t in range(time_extent):
-            predictive_mean, predictive_covariance = self._propagate(posterior_means[t], posterior_covariances[t], dynamic_weight, dynamic_bias, dynamic_covariance)
+            predictive_mean, predictive_covariance = self._propagate(posterior_means[t].clone(), posterior_covariances[t].clone(), dynamic_weight, dynamic_bias, dynamic_covariance)
             observation_mean, observation_covariance = self._propagate(predictive_mean, predictive_covariance, observation_weight, observation_bias, observation_kernel_covariance)
             likelihood_factors[t+1] = self._Gaussian_log_density(observation_mean, observation_covariance, observation[t+1])
             posterior_means[t+1], posterior_covariances[t+1] = self._Bayes_update(predictive_mean, predictive_covariance, observation[t+1], observation_weight, observation_bias, observation_kernel_covariance)

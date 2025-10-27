@@ -12,6 +12,8 @@ from .deserialisation import load_data_csv
 from .model_based_api import FilteringModel
 from pathlib import Path
 from itertools import chain
+from copy import copy, deepcopy
+
 
 class StateSpaceDataset(Dataset):
     """Dataset class for state-observation data.
@@ -21,7 +23,7 @@ class StateSpaceDataset(Dataset):
         Dimensions are Discrete Time - Batch - Data
 
         When used as called from a dataloader you must use the custom collate function
-        Data will always be returned in the order 'state' - 'observation' - 'time' - 'control' - 'metadata'
+        Data will always be returned in the order 'state' - 'observation' - 'time' - 'control' - 'series_metadata'
 
         At the moment only functionality to load entire data set into RAM/VRAM is provided.
         Lazy loading is a planned feature.
@@ -96,9 +98,9 @@ class StateSpaceDataset(Dataset):
         raise AttributeError('No control data available')
 
     @property
-    def metadata(self):
-        if self.metadata:
-            return self.data['metadata']
+    def series_metadata(self):
+        if self.metadata_exists:
+            return self.data["series_metadata"]
         raise AttributeError('No metadata data available')
 
     def __init__(self,
@@ -109,10 +111,17 @@ class StateSpaceDataset(Dataset):
                  observation_prefix: str ="observation",
                  time_column: str|None =None,
                  control_prefix: str|None =None,
-                 device: torch.device = torch.device('cpu')
+                 device: torch.device = torch.device('cpu'),
+                 series_metadata_path: Union[Path, str, None] = None,
              ):
         self.device = device
-        self.data = load_data_csv(data_path, series_id_column = series_id_column, state_prefix = state_prefix, observation_prefix = observation_prefix, time_column = time_column, control_prefix = control_prefix)
+        self.data = load_data_csv(data_path,
+                                  series_id_column = series_id_column,
+                                  state_prefix = state_prefix,
+                                  observation_prefix = observation_prefix,
+                                  time_column = time_column,
+                                  control_prefix = control_prefix,
+                                  series_metadata_path = series_metadata_path)
         self.data['tensor'] = torch.from_numpy(self.data['tensor']).to(device=self.device, dtype=torch.float32)
         self.data_order = []
         if state_prefix is not None:
@@ -124,9 +133,9 @@ class StateSpaceDataset(Dataset):
             self.data_order.append('control')
         self.metadata_exists = False
         try:
-            self.series_metadata = torch.from_numpy(self.data['metadata']).to(device=self.device, dtype=torch.float32)
+            self.data["series_metadata"] = torch.from_numpy(self.data["series_metadata"]).to(device=self.device, dtype=torch.float32)
             self.metadata_exists = True
-        except KeyError:
+        except:
             pass
 
     @property
@@ -146,7 +155,7 @@ class StateSpaceDataset(Dataset):
 
     def __getitem__(self, idx):
         if self.metadata_exists:
-            return self.data['tensor'][idx], self.data['metadata'][idx]
+            return self.data['tensor'][idx], self.data["series_metadata"][idx]
         return self.data['tensor'][idx]
 
     def collate(self, batch) -> Tuple[torch.Tensor, ...]:
@@ -255,13 +264,17 @@ class StateSpaceDataset(Dataset):
 
         """
         with torch.no_grad():
-            true_order = ['state', 'observation', 'time', 'control', 'metadata']
+            true_order = ['state', 'observation', 'time', 'control', 'series_metadata']
             if not modified_series in true_order:
-                raise ValueError('modified_series must be one of "state", "observation", "control", "time", or "metadata"')
+                raise ValueError('modified_series must be one of "state", "observation", "control", "time", or "series_metadata"')
 
             partitioned_data = {data_category: self.data['tensor'][:, :, self.data['indices'][data_category]].transpose(0,1).contiguous() for data_category in self.data_order}
             if self.metadata_exists:
-                partitioned_data['metadata'] = self.data['metadata']
+                partitioned_data["series_metadata"] = self.data["series_metadata"]
+            if modified_series == "series_metadata":
+                self.data["series_metadata"] = f(**partitioned_data)
+                self.metadata_exists = True
+                return
             new_series = f(**partitioned_data).transpose(0,1)
             if modified_series in self.data_order:
                 inverse_index = [i for i in range(self.data['tensor'].size(-1)) if (i not in self.data['indices'][modified_series])]
@@ -272,15 +285,132 @@ class StateSpaceDataset(Dataset):
                 self.data['tensor'] = torch.cat((new_data, new_series), dim=-1)
                 for series in self.data_order:
                     if self.data['indices'][series][0] > self.data['indices'][modified_series][0]:
-                        self.data['indices'][series] = range(self.data['indices'][series][0]-new_series.size(-1), self.data['indices'][series][-1] + 1 - new_series.size(-1))
+                        self.data['indices'][series] = range(self.data['indices'][series][0]-len(self.data['indices'][modified_series]), self.data['indices'][series][-1] + 1 - len(self.data['indices'][modified_series]))
                 self.data['indices'][modified_series] = range(start_index, self.data['tensor'].size(-1))
                 return
+
             self.data_order = [series for series in true_order if (series in self.data_order or series == modified_series)]
             start_index = self.data['tensor'].size(-1)
             self.data['tensor'] = torch.cat((self.data['tensor'], new_series), dim=-1)
             self.data['indices'][modified_series] = range(start_index, self.data['tensor'].size(-1))
 
 
+    def save(self, path: Path|str, series_metadata_path: Path|str|None = None, n_processes: int =-1, bypass_ask=False):
+        r"""Save a dataset to a file or folder
+
+        Parameters
+        ----------
+        path: Path
+            The path to save the dataset to.
+        series_metadata_path: Path or None
+            The path to save metadata to.
+        n_processes: int
+            The number of processes to use if saving to a folder rather than a single file.
+
+        Notes
+        -----
+        If ``data_path`` ends in ".csv" then all trajectories will be saved in a single csv file at that path. If it is a directory then the trajectories will be saved in separate csvs in that directory.
+        """
+        if isinstance(path, str):
+            path = Path(path)
+        if isinstance(series_metadata_path, str):
+            series_metadata_path = Path(series_metadata_path)
+        if series_metadata_path is None and  path.suffix != '.csv':
+            series_metadata_path = path / 'series_metadata.csv'
+
+        if _handle_existing_data(path, bypass_ask):
+            return -1
+        if _handle_existing_data(series_metadata_path, bypass_ask):
+            return -1
+
+        data_cats = ["state", "observation", "time", "control"]
+        d = {}
+        for cat in data_cats:
+            if cat in self.data_order:
+                d[cat] = self.data['tensor'][:, :, self.data['indices'][cat]]
+            else:
+                d[cat] = None
+        if path.suffix == '.csv':
+            _save_file_csv(path, **d)
+
+        else:
+            _save_directory_csv(path, start_index = 0, n_processes = n_processes, **d)
+        try:
+            metadata = self.series_metadata
+            if series_metadata_path is None:
+                raise ValueError('series_metadata_path cannot be None if saving the rest of the dataset to a csv and metadata is present in the dataset')
+            _save_metadata_csv(series_metadata_path, metadata)
+        except AttributeError:
+            pass
+
+    def _make_new_data_dict(self, tensor, series_metadata = None):
+        if series_metadata is not None:
+            return {"tensor": tensor.clone(), "series_metadata": series_metadata.clone(), "indices": deepcopy(self.data['indices']), "data_order": deepcopy(self.data_order)}
+        return {"tensor": tensor.clone(), "indices": deepcopy(self.data['indices']), "data_order": deepcopy(self.data_order)}
+
+    def _deter_split_help(self, data_tensor, ratios, metadata_tensor = None):
+        total_size = data_tensor.size(0)
+        rs = np.array(ratios, np.float32)
+        if len(rs) == 1:
+            return self
+        if np.any(rs <= 0):
+            raise ValueError(f'ratios must be positive, got {rs}.')
+        if len(rs) > total_size:
+            raise ValueError(f'There cannot be more partitions than items in the dataset')
+        sum_rs = rs.sum()
+
+        rs = total_size * rs / sum_rs
+        fs, ns = np.modf(rs)
+        ns = ns.astype(int)
+        while ns.sum() < total_size:
+            max_fs = np.argmax(fs)
+            ns[max_fs] += 1
+            fs[max_fs] -= 1
+        while np.any(ns < 1):
+            zero_ind = np.argmax(fs < 1)
+            max_ns = np.argmax(ns)
+            ns[max_ns] -= 1
+            ns[zero_ind] += 1
+        sets = []
+        c_added = 0
+        for n in ns:
+            new_data_tensor = data_tensor[c_added: c_added + n]
+            if self.metadata_exists:
+                new_metadata = metadata_tensor[c_added: c_added + n]
+                sets.append(StateSpaceSubset(self._make_new_data_dict(new_data_tensor, new_metadata), self))
+            else:
+                sets.append(StateSpaceSubset(self._make_new_data_dict(new_data_tensor), self))
+            c_added += n
+        return tuple(sets)
+
+    def deterministic_split(self, ratios):
+        if self.metadata_exists:
+            return self._deter_split_help(self.data["tensor"], ratios, self.data["series_metadata"])
+        return self._deter_split_help(self.data["tensor"], ratios)
+
+    def select(self, indices):
+        new_data_tensor = self.data['tensor'][indices]
+        if self.metadata_exists:
+            new_metadata = self.data["series_metadata"][indices]
+            return StateSpaceSubset(self._make_new_data_dict(new_data_tensor, new_metadata), self)
+        return StateSpaceSubset(self._make_new_data_dict(new_data_tensor), self)
+
+    def random_split(self, ratios, generator):
+        perm = torch.randperm(self.data['tensor'].size(0))
+        rand_tensor = self.data['tensor'][perm]
+        if self.metadata_exists:
+            return self._deter_split_help(rand_tensor, ratios, self.data["series_metadata"][perm])
+        return self._deter_split_help(rand_tensor, ratios)
+
+
+
+class StateSpaceSubset(StateSpaceDataset):
+
+    def __init__(self, datadict, parent:StateSpaceDataset):
+        self.data = datadict
+        self.data_order = parent.data_order
+        self.metadata_exists = parent.metadata_exists
+        self.device = parent.device
 
 
 
@@ -316,6 +446,15 @@ def _save_directory_csv(path:Path, start_index, state, observation, control, tim
                                  for series_id in range(start_index, start_index + state.size(0))
                                  )
 
+def _save_metadata_csv(path:Path, series_metadata):
+    metadata = series_metadata.cpu().numpy()
+    columns = [f'metadata_{i+1}' for i in range(metadata.shape[-1])]
+    df = pd.DataFrame(data=metadata, columns=columns)
+    df['series_id'] = np.arange(df.shape[0]) + 1
+    df.to_csv(path , index=False)
+
+
+
 def _save_file_csv(path:Path, state, observation, control, time, n_processes = -1):
     data, columns_list = _format_to_save(state, observation, control, time)
     def make_traj_frame(series_id):
@@ -332,6 +471,29 @@ def _save_file_csv(path:Path, state, observation, control, time, n_processes = -
     total_df.to_csv(path, index=False)
 
 
+def _handle_existing_data(data_path, bypass_ask):
+    if data_path is None:
+        return False
+    if data_path.suffix == '.csv':
+        if data_path.is_file():
+            if not bypass_ask:
+                print(f'Warning - file already exists at {data_path}, continuing could overwrite its data')
+                response = input('Continue? (y/n) ')
+                if response != 'Y' and response != 'y':
+                    print('Halting')
+                    return True
+            os.remove(data_path)
+    else:
+        if data_path.is_dir() and not bypass_ask:
+            print(f'Warning - folder already exists at {data_path}, continuing could overwrite its data')
+            response = input('Continue? (y/n) ')
+            if response != 'Y' and response != 'y':
+                print('Halting')
+                return True
+        else:
+            os.mkdir(data_path)
+    return False
+
 def simulate_and_save(data_path: Union[Path, str],
                     SSM: FilteringModel,
                     *,
@@ -341,6 +503,8 @@ def simulate_and_save(data_path: Union[Path, str],
                     device: Union[str, torch.device] = torch.device('cpu'),
                     control: Tensor = None,
                     time:Tensor = None,
+                    series_metadata:Tensor = None,
+                    series_metadata_path: Path|str|None = None,
                     n_processes = -1,
                     bypass_ask = False):
 
@@ -364,10 +528,18 @@ def simulate_and_save(data_path: Union[Path, str],
             The control actions.
         time: Tensor|None, Default: None
             The time each timestep should occur at.
+        series_metadata: Tensor|None, Default: None
+            The metadata associated with each trajectory.
+        series_metadata_path: Path|str|None
+            The path to save the metadata to, should it exist.
         n_processes: int, Default = -1
             The number of cpu processes to use to save the data in parallel. When equal to -1 all cores are used.
         bypass_ask: bool, Default = False
             If False then this function will ask for confirmation before it overwrites an existing file or directory. If bypass_ask is True then it proceed without asking for confirmation.
+
+        Returns
+        -------
+        status: 1 if the function is run to completion, -1 otherwise.
 
         Notes
         -----
@@ -382,31 +554,23 @@ def simulate_and_save(data_path: Union[Path, str],
         is efficient on the GPU and avoids the pitfalls of multiprocessing with PyTorch.
     """
 
-    prior = lambda _batch_size, **_data_dict:  torch.squeeze(SSM.prior_model.sample(_batch_size, 1, **_data_dict), 1)
-    observation_model = lambda _state, **_data_dict: SSM.observation_model.sample(state=_state, **_data_dict)
-    Markov_kernel = lambda _prev_state, **_data_dict: SSM.dynamic_model.sample(prev_state=_prev_state, **_data_dict)
+    prior = lambda _batch_size, **_data_dict:  torch.squeeze(SSM.prior_model.sample(batch_size=_batch_size, n_particles=1, **_data_dict), 1)
+    observation_model = lambda _state, **_data_dict: SSM.observation_model.sample(state=_state.unsqueeze(1), **_data_dict).squeeze(1)
+    Markov_kernel = lambda _prev_state, **_data_dict: SSM.dynamic_model.sample(prev_state=_prev_state.unsqueeze(1), **_data_dict).squeeze(1)
     if isinstance(data_path, str):
         data_path = Path(data_path)
+    if isinstance(series_metadata_path, str):
+        series_metadata_path = Path(series_metadata_path)
+    if series_metadata_path is None and data_path.suffix != '.csv':
+        series_metadata_path = data_path / 'series_metadata.csv'
+    if _handle_existing_data(data_path, bypass_ask):
+        return -1
+    if _handle_existing_data(series_metadata_path, bypass_ask):
+        return -1
+
     if data_path.suffix == '.csv':
         state_list = []
         observation_list = []
-        if data_path.is_file():
-            if not bypass_ask:
-                print(f'Warning - file already exists at {data_path}, continuing could overwrite its data')
-                response = input('Continue? (y/n) ')
-                if response != 'Y' and response != 'y':
-                    print('Halting')
-                    return
-            os.remove(data_path)
-    else:
-        if data_path.is_dir() and not bypass_ask:
-            print(f'Warning - folder already exists at {data_path}, continuing could overwrite its data')
-            response = input('Continue? (y/n) ')
-            if response != 'Y' and response != 'y':
-                print('Halting')
-                return
-        else:
-            os.mkdir(data_path)
 
     data_dict = {}
 
@@ -417,20 +581,25 @@ def simulate_and_save(data_path: Union[Path, str],
             print(f'Generating batch {batch + 1}/{n_batches}', end = '\r')
             if batch == (n_trajectories // batch_size):
                 if control is not None:
-                    batch_control = control[batch * batch_size:]
-                    data_dict['control'] = batch_control[:, 0]
+                    batch_control = control[:, batch * batch_size:]
+                    data_dict['control'] = batch_control[0]
                 if time is not None:
                     batch_time = time[batch * batch_size:]
-                    data_dict['time'] = batch_time[: 0]
-                print()
+                    data_dict['time'] = batch_time[0]
+                if series_metadata is not None:
+                    batch_series_metadata = series_metadata[batch * batch_size:]
+                    data_dict['series_metadata'] = batch_series_metadata
                 temp = prior(n_trajectories - batch*batch_size, **data_dict)
             else:
                 if control is not None:
                     batch_control = control[batch * batch_size : (batch + 1) * batch_size]
-                    data_dict['control'] = batch_control[:, 0]
+                    data_dict['control'] = batch_control[0]
                 if time is not None:
                     batch_time = time[batch * batch_size : (batch + 1) * batch_size]
-                    data_dict['time'] = batch_time[: 0]
+                    data_dict['time'] = batch_time[0]
+                if series_metadata is not None:
+                    batch_series_metadata = series_metadata[batch * batch_size : (batch + 1) * batch_size]
+                    data_dict['series_metadata'] = batch_series_metadata
                 temp = prior(batch_size, **data_dict)
             state = torch.empty(size=(temp.size(0), time_extent+1, temp.size(1)), dtype=torch.float32, device=device)
             state[:, 0] = temp
@@ -439,9 +608,9 @@ def simulate_and_save(data_path: Union[Path, str],
             observation[:, 0] = temp
             for t in range(time_extent):
                 if control is not None:
-                    data_dict['control'] = batch_control[:, t]
+                    data_dict['control'] = batch_control[t]
                 if time is not None:
-                    data_dict['time'] = batch_time[:, t]
+                    data_dict['time'] = batch_time[t]
                 state[:, t+1] = Markov_kernel(state[:, t], **data_dict)
                 observation[:, t+1] = observation_model(state[:, t+1], **data_dict)
             if data_path.suffix == '.csv':
@@ -453,7 +622,10 @@ def simulate_and_save(data_path: Union[Path, str],
             state = torch.cat(state_list, dim=0)
             observation = torch.cat(observation_list, dim=0)
             _save_file_csv(data_path, state, observation, control, time)
+    if series_metadata is not None:
+        _save_metadata_csv(series_metadata_path, series_metadata)
     print('Done                  \n')
+    return 1
 
 
 

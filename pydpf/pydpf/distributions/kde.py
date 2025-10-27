@@ -125,9 +125,12 @@ class KernelMixture(Distribution):
     """
     conditional = True
 
-    def __init__(self, kernel: Distribution|Module, generator: Union[torch.Generator, None]):
+    def __init__(self, kernel: Distribution|Module, generator: Union[torch.Generator, None], resampler: Module|None = None):
         super().__init__(generator)
-        self.resampler = MultinomialResampler(generator=generator)
+        if resampler is None:
+            self.resampler = MultinomialResampler(generator=generator)
+        else:
+            self.resampler = resampler
         if not isinstance(kernel, Distribution):
             if not hasattr(kernel, "sample"):
                 raise AttributeError('Custom distributions must have an "sample" method.')
@@ -148,7 +151,7 @@ class KernelMixture(Distribution):
         if loc.size(-1) != self.dim:
             raise ValueError(f'It is not permitted for the kernel to have a different dimension as the space it is convolved over, found {loc.size(-1)} and {self.dim}.')
         if weight.size(-1) != loc.size(-2):
-            raise ValueError(f'Differing number of kernels locations{loc.size(-2)} and weights {weight.size(-1)}.')
+            raise ValueError(f'Differing number of kernels locations {loc.size(-2)} and weights {weight.size(-1)}.')
 
 
     def sample(self,  loc: Tensor, weight: Tensor, sample_size: tuple[int,...]|None) -> Tensor:
@@ -201,6 +204,6 @@ class KernelMixture(Distribution):
         try:
             self._check_conditions(loc, weight)
             densities = self.kernel.log_density(sample.unsqueeze(-2) - self._unsqueeze_to_size(loc, sample.unsqueeze(-2), 2))
-            return torch.logsumexp(densities + weight.unsqueeze(-2), dim=-1)
+            return torch.logsumexp(densities + self._unsqueeze_to_size(weight, densities, 1), dim=-1)
         except RuntimeError as e:
             raise RuntimeError(f'Failed to apply condition with error: \n {e} \n This is likely to a mismatch in batch dimensions.')

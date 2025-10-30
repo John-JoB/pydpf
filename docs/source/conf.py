@@ -3,7 +3,7 @@ import os
 project = 'pydpf'
 author = 'John-Joseph Brady'
 version = '1.0'
-release = '1.0.0'
+release = '1.1.1'
 extensions = ['numpydoc', 'autodoc', 'sphinx.ext.mathjax', 'sphinx_rtd_theme', 'sphinx.ext.coverage']
 autodoc_mock_imports = ['joblib', 'numpy', 'polars', 'pandas']
 master_doc = 'index'

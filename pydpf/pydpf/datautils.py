@@ -396,7 +396,7 @@ class StateSpaceDataset(Dataset):
         return StateSpaceSubset(self._make_new_data_dict(new_data_tensor), self)
 
     def random_split(self, ratios, generator):
-        perm = torch.randperm(self.data['tensor'].size(0))
+        perm = torch.randperm(self.data['tensor'].size(0), generator=generator)
         rand_tensor = self.data['tensor'][perm]
         if self.metadata_exists:
             return self._deter_split_help(rand_tensor, ratios, self.data["series_metadata"][perm])
@@ -548,7 +548,7 @@ def simulate_and_save(data_path: Union[Path, str],
         ``SSM`` must have the following components ``prior_model``, ``dynamic_model`` and ``observation_model``. All must have a ``.sample`` method defined. Despite not generating multiple samples per-trajectory,
         as we do during filtering all ``.sample`` methods should act the as if there were. I.e. the particle dimension should exist, but will always be of size 1.
 
-        ``control`` should be a ``time_extent`` X ``n_trajectories`` X ``inherent_dim`` tensor if specified. ``time`` should be a ``time_extent`` X ``n_trajectories`` if specified. This matches usual ``PyDPF`` convention.
+        ``control`` should be a ``time_extent`` X ``n_trajectories`` X ``inherent_dim`` tensor if specified. ``time`` should be ``time_extent`` X ``n_trajectories`` if specified. This matches usual ``PyDPF`` convention.
 
         ``n_processes`` only specifies the number of processes used for saving the data and not generating it. Generating the data is done using standard CUDA parallelism if on the GPU and no parallelism on the CPU. This
         is efficient on the GPU and avoids the pitfalls of multiprocessing with PyTorch.
@@ -584,7 +584,7 @@ def simulate_and_save(data_path: Union[Path, str],
                     batch_control = control[:, batch * batch_size:]
                     data_dict['control'] = batch_control[0]
                 if time is not None:
-                    batch_time = time[batch * batch_size:]
+                    batch_time = time[:, batch * batch_size:]
                     data_dict['time'] = batch_time[0]
                 if series_metadata is not None:
                     batch_series_metadata = series_metadata[batch * batch_size:]
@@ -592,25 +592,28 @@ def simulate_and_save(data_path: Union[Path, str],
                 temp = prior(n_trajectories - batch*batch_size, **data_dict)
             else:
                 if control is not None:
-                    batch_control = control[batch * batch_size : (batch + 1) * batch_size]
+                    batch_control = control[:, batch * batch_size : (batch + 1) * batch_size]
                     data_dict['control'] = batch_control[0]
                 if time is not None:
-                    batch_time = time[batch * batch_size : (batch + 1) * batch_size]
+                    batch_time = time[:, batch * batch_size : (batch + 1) * batch_size]
                     data_dict['time'] = batch_time[0]
                 if series_metadata is not None:
                     batch_series_metadata = series_metadata[batch * batch_size : (batch + 1) * batch_size]
                     data_dict['series_metadata'] = batch_series_metadata
                 temp = prior(batch_size, **data_dict)
             state = torch.empty(size=(temp.size(0), time_extent+1, temp.size(1)), dtype=torch.float32, device=device)
+            data_dict["t"] = 0
             state[:, 0] = temp
             temp = observation_model(state[:, 0], **data_dict)
             observation = torch.empty(size=(temp.size(0), time_extent+1, temp.size(1)), device=device)
             observation[:, 0] = temp
             for t in range(time_extent):
+                data_dict["t"] = t + 1
                 if control is not None:
-                    data_dict['control'] = batch_control[t]
+                    data_dict['control'] = batch_control[t + 1]
                 if time is not None:
-                    data_dict['time'] = batch_time[t]
+                    data_dict['time'] = batch_time[t + 1]
+                    data_dict['prev_time'] = batch_time[t]
                 state[:, t+1] = Markov_kernel(state[:, t], **data_dict)
                 observation[:, t+1] = observation_model(state[:, t+1], **data_dict)
             if data_path.suffix == '.csv':
@@ -621,7 +624,15 @@ def simulate_and_save(data_path: Union[Path, str],
         if data_path.suffix == '.csv':
             state = torch.cat(state_list, dim=0)
             observation = torch.cat(observation_list, dim=0)
-            _save_file_csv(data_path, state, observation, control, time)
+            if time is not None:
+                t_time = time.transpose(0, 1)
+            else:
+                t_time = None
+            if control is not None:
+                t_control = control.transpose(0, 1)
+            else:
+                t_control = None
+            _save_file_csv(data_path, state, observation, t_control, t_time)
     if series_metadata is not None:
         _save_metadata_csv(series_metadata_path, series_metadata)
     print('Done                  \n')

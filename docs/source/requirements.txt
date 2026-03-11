@@ -1,8 +1,12 @@
 sphinx==7.1.2
 sphinx-rtd-theme>=1.3.0rc1
+sphinx-autodoc-typehints >= 1.22
 numpydoc==1.7.0
 autodoc==0.5.0
 numpydoc>=1.7.0
-joblib>=1.4.2
 pydata-sphinx-theme==0.16.1
 torch>=2.3.1
+pandas==2.3.3
+polars==1.38.1
+joblib==1.5.2
+numpy==2.3.4

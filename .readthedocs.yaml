@@ -3,6 +3,8 @@ version: 2
 
 build:
 
+  clean: true
+
   os: ubuntu-22.04
 
   tools:

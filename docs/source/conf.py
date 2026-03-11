@@ -52,7 +52,7 @@ def generate_api_pages(app):
 
 project = 'pydpf'
 author = 'John-Joseph Brady'
-version = '1.0'
+version = '1.1.2'
 release = '1.1.2'
 extensions = ['numpydoc', "sphinx.ext.autodoc", 'sphinx.ext.mathjax', 'sphinx_rtd_theme', 'sphinx.ext.coverage', "sphinx.ext.autosummary", "sphinx.ext.napoleon"]
 autosummary_generate = True

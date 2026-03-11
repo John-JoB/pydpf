@@ -41,6 +41,7 @@ class MultivariateGaussian(Distribution):
 
     @constrained_parameter
     def cholesky_covariance(self) -> Tuple[Tensor, Tensor]:
+        """The lower Cholesky decomposition of the covariance matrix"""
         if self.diagonal_cov:
             diag = torch.diag(self.cholesky_covariance_.diag())
             return  self.cholesky_covariance_,  diag * diag.sign()
@@ -51,10 +52,12 @@ class MultivariateGaussian(Distribution):
 
     @cached_property
     def inv_cholesky_cov(self):
+        """The inverse of the lower Cholesky decomposition of the covariance matrix"""
         return torch.linalg.inv_ex(self.cholesky_covariance)[0]
 
     @cached_property
     def half_log_det_cov(self):
+        """Half the log determinant of the covariance matrix"""
         return torch.linalg.slogdet(self.cholesky_covariance)[1]
 
     def sample(self, sample_size: tuple[int,...]|None = None) -> Tensor:

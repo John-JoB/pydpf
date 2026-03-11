@@ -111,6 +111,8 @@ class constrained_parameter:
         self.value_name = f'{self.function.__name__}_value'
 
     def __get__(self, instance: Module, owner: Any) -> Tensor:
+        if instance is None:
+            return self
         if not hasattr(instance, self.value_name):
             self._update(instance)
         return getattr(instance, self.value_name)
@@ -152,6 +154,8 @@ class cached_property:
         self.value_name = f'{self.function.__name__}_value'
 
     def __get__(self, instance, owner):
+        if instance is None:
+            return self
         if not hasattr(instance, self.value_name):
             v = self.function(instance)
             instance.disallow_set_values = False

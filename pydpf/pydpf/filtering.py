@@ -533,15 +533,15 @@ class DPF(ParticleFilter):
     use_REINFORCE_for_initial_proposal: bool. Default False.
         Whether to use the REINFORCE estimator for the gradient due to the initial particle proposal process.
 
-        Notes
-        -----
-        This DPF does not use a differentiable resampling method, instead the gradients are detached at each time-step. See [1]_ for detail.
+    Notes
+    -----
+    This DPF does not use a differentiable resampling method, instead the gradients are detached at each time-step. See [1]_ for detail.
 
-        References
-        ----------
-        .. [1] Jonschkowski R, Rastogi D, Brock O (2018). “Differentiable Particle Filters: End-to-End
-           Learning with Algorithmic Priors.” In Proc. Robot.: Sci. Syst. Pittsburgh, PA, USA.
-        """
+    References
+    ----------
+    .. [1] Jonschkowski R, Rastogi D, Brock O (2018). “Differentiable Particle Filters: End-to-End  Learning with Algorithmic Priors.” In Proc. Robot.: Sci. Syst. Pittsburgh, PA, USA.
+
+    """
 
     def __init__(self,
                  SSM: FilteringModel = None,
@@ -558,7 +558,7 @@ class DPF(ParticleFilter):
         self.proposal = lambda prev_state, prev_weight, **data: temp(prev_state.detach(), prev_weight.detach(), **data)
 
 class SoftDPF(ParticleFilter):
-    """Differentiable particle filter with soft-resampling. [1]_
+    r"""Differentiable particle filter with soft-resampling. [1]_
 
     Parameters
     ----------
@@ -577,7 +577,10 @@ class SoftDPF(ParticleFilter):
     -----
     Applies a non-target proposal to resampling, replace the resampling weights :math:`w^{i}_{t}` with:
 
-    .. math:: (\text{softness}) w^{i}_{t} + \frac{(1-\text{softness})}{\text{n_particles}}
+    .. math::
+
+        (\mathrm{softness}) w^{i}_{t} +
+        \frac{(1-\mathrm{softness})}{\mathrm{n\_particles}}
 
     With ``softness`` = 1 then this is equivelent to the straight-through estimator used in [2]_.
 
@@ -586,6 +589,7 @@ class SoftDPF(ParticleFilter):
     .. [1] Karkus P, Hsu D, Lee WS (2018). “Particle filter networks with application to visual localization.” In Proc. Conf. Robot Learn., pp. 169–178. PMLR, Zurich, CH.
 
     .. [2] Naesseth C, Linderman S, Ranganath R, Blei D (2018). “Variational sequential monte carlo.” In Proc. Int. Conf. Art. Int. and Stat. (AISTATS), pp. 968–977. PMLR, Lanzarote, Canary Islands.
+
     """
 
     def __init__(self, SSM: FilteringModel = None,
@@ -671,8 +675,8 @@ class StopGradientDPF(ParticleFilter):
     ----------
     .. [1] Scibior A, Wood F (2021). “Differentiable particle filtering without modifying the forward pass.” arXiv:2106.10314
 
-    .. [2] Cox B, P´erez-Vieites S, Zilberstein N, Sevilla M, Segarra S, Elvira V (2024). “End-to-End Learning of Gaussian Mixture Proposals Using Differentiable Particle Filters and Neural Networks.”
-    In Int. Conf. Acoustics, Speech and Sig. Proc. (ICASSP), pp. 9701–9705.
+    .. [2] Cox B, P´erez-Vieites S, Zilberstein N, Sevilla M, Segarra S, Elvira V (2024). “End-to-End Learning of Gaussian Mixture Proposals Using Differentiable Particle Filters and Neural Networks.” In Int. Conf. Acoustics, Speech and Sig. Proc. (ICASSP), pp. 9701–9705.
+
     """
     def __init__(self, SSM: FilteringModel = None,
                  resampling_generator: torch.Generator = torch.default_generator,

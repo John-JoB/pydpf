@@ -235,6 +235,10 @@ class OptimalTransportResampler(Module):
         Optimal transport resampling results in biased (but asymptotically consistent) estimates of all non-affine functions of the latent state.
         Including the likelihood. The authors of the proposing paper investigate this effect and find it sufficiently small to ignore. See their
         paper [1]_ for details.
+
+        References
+        ----------
+        .. [1] Corenflos et al., Differentiable Particle Filtering via Entropy-Regularized Optimal Transport, 2021
         """
 
     def __init__(self, regularisation: float, decay_rate: float, min_update_size: float, max_iterations: int, transport_gradient_clip: float):
@@ -305,7 +309,7 @@ class OptimalTransportResampler(Module):
         Returns
         -------
         log_uniform_weights: (B,N) Tensor
-            A tensor of log(1/N)
+            A tensor of :math:`log(1/N)`
 
         cost_matrix: (B, N, N) Tensor
             The auto-distance matrix of scaled_x_t under the 2-Norm.

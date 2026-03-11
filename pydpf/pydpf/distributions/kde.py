@@ -19,7 +19,7 @@ class CompoundDistribution(Distribution):
 
         Notes
         -----
-        If a distribution in the list distributions is not a Distribution subclass (i.e. it is a custom implementation) then it must have the following attributes::
+        If a distribution in the list distributions is not a Distribution subclass (i.e. it is a custom implementation) then it must have the following attributes:
 
         dim : the dimension of the distribution.
 

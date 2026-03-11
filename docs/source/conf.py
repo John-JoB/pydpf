@@ -3,6 +3,29 @@ import os
 import inspect
 import pkgutil
 import importlib
+from sphinx.util import logging
+from sphinx.ext.autodoc import PropertyDocumenter
+sys.path.insert(0, os.path.abspath('../../pydpf/'))
+from pydpf.base import cached_property, constrained_parameter
+
+
+logger = logging.getLogger(__name__)
+
+
+class MyPropertyDocumenter(PropertyDocumenter):
+    objtype = "constrained_parameter"
+    directivetype = "property"
+    priority = PropertyDocumenter.priority + 10
+
+    @classmethod
+    def can_document_member(cls, member, membername, isattr, parent):
+        print(member.__class__.__name__)
+        if isinstance(member, constrained_parameter):
+            print("Found constrained_parameter")
+        return isinstance(member, constrained_parameter) or isinstance(member, cached_property)
+
+def setup(app):
+    app.add_autodocumenter(MyPropertyDocumenter)
 
 
 def get_package_members(package_name):
@@ -25,10 +48,13 @@ def get_package_members(package_name):
 
     return objects
 
-def generate_api_pages(app):
+def generate_api_pages():
+    logger.info("Generating API pages...")
     package_name = "pydpf"
+    scr_dir = os.path.join(os.path.dirname(__file__))
     objects = get_package_members(package_name)
-    api_dir = os.path.join(app.srcdir, "api")
+    api_dir = os.path.join(scr_dir, "api")
+
     os.makedirs(api_dir, exist_ok=True)
 
     index_lines = ["API Reference", "=============\n", ".. toctree::", "   :maxdepth: 2\n"]
@@ -55,7 +81,7 @@ author = 'John-Joseph Brady'
 version = '1.1.2'
 release = '1.1.2'
 extensions = ['numpydoc', "sphinx.ext.autodoc", 'sphinx.ext.mathjax', 'sphinx_rtd_theme', 'sphinx.ext.coverage', "sphinx.ext.autosummary", "sphinx.ext.napoleon"]
-autosummary_generate = True
+
 autodoc_default_options = {
     "members": True,
     "undoc-members": False,
@@ -97,7 +123,7 @@ html_theme_options = {
     ],
 }
 
-sys.path.insert(0, os.path.abspath('../../pydpf/'))
 
-def setup(app):
-    app.connect("builder-inited", generate_api_pages)
+generate_api_pages()
+
+autosummary_generate = True

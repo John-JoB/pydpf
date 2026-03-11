@@ -75,30 +75,35 @@ class StateSpaceDataset(Dataset):
 
     @property
     def state(self):
+        """The dataset state as a tensor"""
         if 'state' in self.data_order:
             return self.data['tensor'][:, :, self.data['indices']['state']].permute(1, 0, 2).contiguous()
         raise AttributeError('No state data available')
 
     @property
     def observation(self):
+        """The dataset observation as a tensor"""
         if 'observation' in self.data_order:
             return self.data['tensor'][:, :, self.data['indices']['observation']].permute(1, 0, 2).contiguous()
         raise AttributeError('No state data available')
 
     @property
     def time(self):
+        """The dataset time as a tensor"""
         if 'time' in self.data_order:
             return self.data['tensor'][:, :, self.data['indices']['time']].squeeze(-1).permute(1, 0).contiguous()
         raise AttributeError('No time data available')
 
     @property
     def control(self):
+        """The dataset control as a tensor"""
         if 'control' in self.data_order:
             return self.data['tensor'][:, :, self.data['indices']['control']].permute(1, 0, 2).contiguous()
         raise AttributeError('No control data available')
 
     @property
     def series_metadata(self):
+        """The dataset series_metadata as a tensor"""
         if self.metadata_exists:
             return self.data["series_metadata"]
         raise AttributeError('No metadata data available')
@@ -140,14 +145,17 @@ class StateSpaceDataset(Dataset):
 
     @property
     def observation_dimension(self):
+        """The dimension of each observation"""
         return self.observation.shape[-1]
 
     @property
     def state_dimension(self):
+        """The dimension of the state"""
         return self.state.shape[-1]
 
     @property
     def control_dimension(self):
+        """The dimension of the control actions"""
         return self.control.shape[-1]
 
     def __len__(self):

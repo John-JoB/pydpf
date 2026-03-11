@@ -68,11 +68,13 @@ class VonMises(Distribution):
 
     @constrained_parameter
     def mean(self):
+        """The mean of the distribution, constrained to be within :math:`[-\pi, \pi]`."""
         mod_angle = torch.remainder(self.mean_, 2*torch.pi)
         return self.mean_, torch.where(mod_angle > torch.pi, mod_angle - 2*torch.pi, mod_angle)
 
     @constrained_parameter
     def concentration(self):
+        """The concentration of the distribution, constrained to be positive"""
         return self.concentration_, torch.abs(self.concentration_)
 
     #The torch implementation has no way to use a generator so we modify their implementation

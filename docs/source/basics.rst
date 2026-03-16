@@ -1,14 +1,19 @@
+.. _pydpf-basics:
+
 PyDPF basics
 ============
 
 Modules
 -------
+
 PyDPF includes it’s own Module class that extends torch.nn.Module that we find useful
 in defining custom parameterised probability distributions. We include the following two
 Property-like environments.
+
 cached property: Used to cache the results of functions of the parameters. For example if we
 need to repeatedly use the matrix inverse of a parameter. Gradients can be passed through
 the transform that creates the cached_property. Cached properties can be stacked.
+
 constrained parameter: Used to constrain parameters. constrained_parameter applies a
 transform in-place from an unconstrained parameter to a parameter satisfying the required
 constraint. Because this is performed in-place, gradient tracking is not supported. This is
@@ -43,7 +48,7 @@ variance are parameters.
             return self.variance_data, torch.abs(self.variance_data)
 
         @pydpf.cached_property
-            def inverse_variance(self):
+        def inverse_variance(self):
             return 1/self.variance
 
         @pydpf.cached_property
@@ -62,19 +67,20 @@ sub-module can be a torch.nn.Module without consequence.
 
 PyDPF data categories
 ---------------------
+
 The intended usage for PyDPF is for the user to create their own models and algorithms, as
 pydpf.Module objects, and define custom functions to interface with those that the package
 provides. Therefore, we need a schema for the different variables that can be passed from
 the base filtering algorithms to user defined functions. We define this schema below. PyDPF
 assumes a batch-sequential paradigm, with additional dimensions for each draw, known in
 the SMC literature as a particle, in a sample and the dimensionality of the distribution.
-Tensors handled and returned by PyDPF functions may be at most of size (T × B × K × Di)
-corresponding to (time-step × batch × particle × intrinsic-dimension). Frequently, one or
+Tensors handled and returned by PyDPF functions may be at most of size (T x B x K x Di)
+corresponding to (time-step x batch x particle x intrinsic-dimension). Frequently, one or
 more of these dimensions will not be present, in which case ordering is maintained. When
 we pass the data as arguments to user-defined functions we index a single time-step so the
 data-types and dimensions given in Table 1 are as the user-defined functions will receive. In
 PyDPF all arguments are passed by keyword so unneeded arguments received from a PyDPF
-call to a user-defined function can neatly be grouped into a **dictionary object.
+call to a user-defined function can neatly be grouped into a \*\*dictionary object.
 
 state - The particle estimates of the latent state of the state-space system at the current time-step - Tensor (B × K × Ds)
 

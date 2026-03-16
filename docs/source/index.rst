@@ -9,6 +9,10 @@ PyDPF can be be installed by running:
 
     pip install pydpf
 
+Before using our package we recommend you read our :ref:`pydpf-basics` guide for an overview of some key aspects of writing models
+and running experiments in pydpf.
+
+
 If you use our package in your publication please cite our paper:
 
 .. code-block:: text

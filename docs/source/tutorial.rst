@@ -127,7 +127,7 @@ Now we have our model components we can group them together into a neat SSM obje
 Generating Synthetic Data
 =========================
 
-From a given state-space model it is simple in PyDPF to simulate a large amount of trajectories and save them to file. Here we choose to simulate 1000 trajectories of 1000 time-steps from our stochastic volatility model with
+From a given state-space model it is simple in PyDPF to simulate a large amount of trajectories and save them to file. Here we choose to simulate 200 trajectories of 100 time-steps from our stochastic volatility model with
 :math:`\alpha=0.91, \beta=0.5, \sigma=1`. We simulate trajectories in, parallelised if using CUDA, batches of 100.
 
 
@@ -262,17 +262,17 @@ optimiser step to ensure that the cache is properly invalidated and the computat
     with torch.inference_mode():
         mean_loss = 0.0
         for state, observation in test_loader:
-            outputs = DPF(n_particles= 64,
+            MSE = DPF(n_particles= 64,
                           time_extent=100,
                           aggregation_function=output_function,
                           observation=observation,
                           ground_truth=state)
-            mean_loss += outputs["MSE"].mean().item()
+            mean_loss += MSE.mean().item()
 
     print(f"Test MSE: {mean_loss/len(test_loader)}")
-    print(f"Learned alpha: {SSM.dynamic_model.alpha.item()}")
-    print(f"Learned beta: {SSM.observation_model.beta.item()}")
-    print(f"Learned sigma: {SSM.dynamic_model.sigma.item()}")
+    print(f"Learned alpha: {learned_SSM.dynamic_model.alpha.item()}")
+    print(f"Learned beta: {learned_SSM.observation_model.beta.item()}")
+    print(f"Learned sigma: {learned_SSM.dynamic_model.sigma.item()}")
 
 References
 ==========

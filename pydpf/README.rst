@@ -1,9 +1,21 @@
-# PyDPF
+PyDPF
+======
 
-[![PyPI version](https://img.shields.io/pypi/v/pydpf)](https://pypi.org/project/pydpf/)
-[![Python](https://img.shields.io/pypi/pyversions/pydpf)](https://pypi.org/project/pydpf/)
-[![Docs](https://img.shields.io/badge/docs-online-blue)](https://python-dpf.readthedocs.io/en/latest/)
-[![GitHub](https://img.shields.io/badge/github-repo-blue?logo=github)](https://github.com/John-JoB/pydpf)
+.. image:: https://img.shields.io/pypi/v/pydpf
+   :target: https://pypi.org/project/pydpf/
+   :alt: PyPI version
+
+.. image:: https://img.shields.io/pypi/pyversions/pydpf
+   :target: https://pypi.org/project/pydpf/
+   :alt: Python versions
+
+.. image:: https://img.shields.io/badge/docs-online-blue
+   :target: https://python-dpf.readthedocs.io/en/latest/
+   :alt: Docs
+
+.. image:: https://img.shields.io/badge/github-repo-blue?logo=github
+   :target:  https://github.com/John-JoB/pydpf
+   :alt: GitHub
 
 PyDPF is an extensible package for differentiable particle filtering. Designed for researchers and practitioners working with
 deep sequential Monte Carlo methods.

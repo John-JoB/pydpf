@@ -17,6 +17,10 @@ PyDPF
    :target:  https://github.com/John-JoB/pydpf
    :alt: GitHub
 
+.. image:: https://img.shields.io/badge/arXiv-2510.25693-blue.svg
+   :target:  https://arxiv.org/abs/2510.25693
+   :alt: arxiv
+
 PyDPF is an extensible package for differentiable particle filtering. Designed for researchers and practitioners working with
 deep sequential Monte Carlo methods.
 

@@ -1,6 +1,6 @@
 
-[![PyPI version](https://img.shields.io/pypi/v/my-package)](https://pypi.org/project/pydpf/)
-[![Python](https://img.shields.io/pypi/pyversions/my-package)](https://pypi.org/project/pydpf/)
+[![PyPI version](https://img.shields.io/pypi/v/pydpf)](https://pypi.org/project/pydpf/)
+[![Python](https://img.shields.io/pypi/pyversions/pydpf)](https://pypi.org/project/pydpf/)
 [![Docs](https://img.shields.io/badge/docs-online-blue)](https://python-dpf.readthedocs.io/en/latest/)
 [![GitHub](https://img.shields.io/badge/github-repo-blue?logo=github)](https://github.com/John-JoB/pydpf)
 

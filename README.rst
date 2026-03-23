@@ -5,11 +5,11 @@ PyDPF
    :target: https://pypi.org/project/pydpf/
    :alt: PyPI version
 
-.. image:: https://img.shields.io/pypi/pyversions/pydpf
+.. image:: https://img.shields.io/badge/python-3.12%2B-blue
    :target: https://pypi.org/project/pydpf/
    :alt: Python versions
 
-.. image:: https://img.shields.io/badge/docs-online-blue
+.. image:: https://img.shields.io/badge/docs-online-green
    :target: https://python-dpf.readthedocs.io/en/latest/
    :alt: Docs
 

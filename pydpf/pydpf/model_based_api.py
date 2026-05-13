@@ -145,7 +145,7 @@ class FilteringModel(Module):
         else:
             if not hasattr(self.prior_model, 'log_density'):
                 raise AttributeError("The prior model must implement a 'log_density' method")
-            if not hasattr(self.initial_proposal_model, 'propose'):
+            if not hasattr(self.initial_proposal_model, 'sample'):
                 raise AttributeError("The initial sample model must implement a 'sample' method")
             if not hasattr(self.initial_proposal_model, 'log_density'):
                 raise AttributeError("The initial proposal model must implement a 'log_density' method")

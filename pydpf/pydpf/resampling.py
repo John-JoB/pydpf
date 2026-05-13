@@ -376,7 +376,7 @@ class KernelResampler(Module):
         if torch.is_grad_enabled() and self._need_weight_output:
             density = self.mixture.log_density(new_state, state, weight)
             new_weight = density - density.detach()
-            return new_state, new_weight
+            return new_state, new_weight - log(weight.size(1))
 
         if self._need_weight_output:
             return new_state, torch.full(weight.size(), -log(weight.size(1)), device=weight.device, dtype=weight.dtype)

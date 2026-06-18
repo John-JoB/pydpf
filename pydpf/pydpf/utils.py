@@ -189,11 +189,13 @@ class set_deterministic_mode():
 
 
     def set_mode(self):
+        global _deterministic_mode
         os.putenv("CUBLAS_WORKSPACE_CONFIG", ':4096:8')
         torch.use_deterministic_algorithms(True, warn_only=self.warn_only)
         _deterministic_mode = True
 
     def unset_mode(self):
+        global _deterministic_mode
         os.unsetenv("CUBLAS_WORKSPACE_CONFIG")
         torch.use_deterministic_algorithms(False)
         _deterministic_mode = False

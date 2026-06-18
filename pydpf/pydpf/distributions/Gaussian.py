@@ -218,10 +218,10 @@ class _GeneralCovGaussian(Distribution):
             cov = self.prepare_cov(cov)
             cov = self._unsqueeze_to_size(cov, sample.dim() + 1, 2)
             half_log_det_cov = torch.linalg.slogdet(cov)[1]
-            residuals_cov = torch.linalg.solve_triangular(cov, residuals.unsqueeze(-1))
+            residuals_cov = torch.linalg.solve_triangular(cov, residuals.unsqueeze(-1), upper=False)
 
 
-        prefactor =  -sample.size(-1) * MultivariateGaussian.half_log_2pi - half_log_det_cov
+        prefactor =  -sample.size(-1) * MultivariateGaussian._half_log2pi - half_log_det_cov
 
         exponent = (-1 / 2) * torch.sum(residuals_cov ** 2, dim=-1)
         return prefactor + exponent
@@ -402,7 +402,7 @@ class LinearGaussian(Distribution):
             raise ValueError(f'Bias must have the same dimensions as the weights first dimension, found {bias.size()} and {weight.size()}')
         if cholesky_covariance.device != device:
             raise ValueError(f'Weight and Covariance should be on the same device, found {device} and {cholesky_covariance.device}')
-        if cholesky_covariance.device != device:
+        if bias.device != device:
             raise ValueError(f'Weight and bias should be on the same device, found {device} and {bias.device}')
 
         return _ConstCovGaussian(LinearTransform(), cholesky_covariance, diagonal_cov, generator)

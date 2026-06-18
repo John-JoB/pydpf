@@ -4,7 +4,7 @@ import torch
 from torch import Tensor
 from .utils import normalise
 from .base import Module
-from .resampling import SystematicResampler, SoftResampler, OptimalTransportResampler, StopGradientResampler, KernelResampler, MultinomialResampler
+from .resampling import SystematicResampler, SoftResampler, OptimalTransportResampler, StopGradientResampler, KernelResampler, MultinomialResampler, DiffusionResampler
 from .distributions import KernelMixture
 from .model_based_api import FilteringModel
 from .base import DivergenceError
@@ -483,7 +483,7 @@ class MarginalParticleFilter(SIS):
         self.SSM = SSM
 
         prior = ParticleFilter._make_PF_prior(SSM, self.REINFORCE_i)
-        prop = MarginalParticleFilter._make_MPF_proposal(SSM, resampler, self.REINFORCE_i, self.optimise)
+        prop = MarginalParticleFilter._make_MPF_proposal(SSM, resampler, self.REINFORCE, self.optimise)
 
 
 
@@ -918,3 +918,44 @@ class MarginalSoftDPF(MarginalParticleFilter):
         base_resampler = MultinomialResampler(resampling_generator) if multinomial else SystematicResampler(resampling_generator)
         resampler = SoftResampler(softness, base_resampler, resampling_generator.device)
         super().__init__(resampler, SSM, use_REINFORCE_for_proposal=use_REINFORCE_for_proposal, use_REINFORCE_for_initial_proposal=use_REINFORCE_for_initial_proposal, optimise_for_bootstrap=False)
+
+
+class DiffusionDPF(ParticleFilter):
+    r"""Particle filter with diffusion resampling [1]_.
+
+        Parameters
+        ----------
+        SSM: FilteringModel
+            A ``FilteringModel`` that represents the SSM (and optionally a proposal model). See the documentation of ``FilteringModel`` for more complete information.
+        resampling_generator: torch.Generator
+            Generator to track the resampling rng.
+        alpha: float
+            The noising strength, determines the size of the forward diffusion coefficient, must be negative. More negative alpha corresponds to a faster forward diffusion.
+        diffusion_time: float
+            The maximum time of the forward diffusion. If a schedual is provided then i.e. schedule is not None then this parameter is ignored.
+        n_steps: int
+            The number of EM integrator steps to use in total. If a schedule is provided then i.e. schedule is not None then this parameter is ignored.
+        schedule: (S,) Tensor or None, Default: None
+            The discrete times at which the EM integrator is evaluated. If schedule is None then the integrator schedule is set to the n_steps + 1 uniformly spaced points in [0, diffusion_time].
+        jitter: float, Default: 0.
+            A tolerance parameter to ensure numerical stability if the covariance of the weighted posterior is very small. Must be non-negative.
+
+        References
+        ----------
+        .. [1] Andersson and Zhao, *Diffusion differentiable resampling*, 2026.
+
+        See Also
+        --------
+        pydpf.resampling.DiffusionResampler : The diffusion resampler
+    """
+
+    def __init__(self, SSM:FilteringModel = None,
+                 resampling_generator: torch.Generator = torch.default_generator,
+                 alpha: float = -1.,
+                 diffusion_time: float = 2.,
+                 n_steps: int = 16,
+                 schedule:Tensor|None = None,
+                 jitter: float = 0.,
+                 ):
+        resampler = DiffusionResampler(alpha, diffusion_time, n_steps, resampling_generator, schedule, jitter)
+        super().__init__(resampler, SSM)

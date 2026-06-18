@@ -5,17 +5,18 @@ Resamplers all subclass ``pydpf.Module``
 import torch
 from torch import Tensor
 from typing import Tuple, Any
-from .utils import batched_select
+from .utils import batched_select, multiple_unsqueeze, normalise
 from .base import Module
 from . import optimal_transport
 from math import sqrt, log
+from .distributions.Gaussian import  StandardGaussian
 
 
 
 class MultinomialResampler(Module):
     """Multinomial resampler.
 
-        Resamples particles from the multinomial distribution. With
+        Resamples particles from the multinomial distribution.
 
         Parameters
         ----------
@@ -339,36 +340,44 @@ class OptimalTransportResampler(Module):
         return optimal_transport.apply_transport(state, transport, N)
 
 class KernelResampler(Module):
+    r"""
+    Differentiable Kernel regularised resampler [1]_.
 
+    check
+
+    The KernelResampler selects first resamples the particles normally to obtain :math:`\hat{x}^{1:N}_{t}` and then draws the returned particles are given by:
+
+    .. math::
+
+        \begin{gathered}
+            x^{n}_{t} = \hat{x}^{1:N}_{t} + k \\
+            k \sim \text{Kernel}
+        \end{gathered}
+
+    Or equivalently the particles are resampled from a mixture distribution.
+
+    Parameters
+    ----------
+    kernel: Distribution
+        The kernel to convolve over the particles to form the KDE sampling distribution.
+    generator: torch.Generator
+        The generator to track the random state of the resampling process.
+
+
+
+    References
+    ----------
+    .. [1] Younis and Sudderth, Differentiable and Stable Long-Range Tracking of Multiple Posterior Modes, 2021
+    """
 
     def __init__(self, kernel):
-        """
-            Returns a function for performing differentiable kernel resampling (Younis and Sudderth 'Differentiable and Stable Long-Range Tracking of Multiple Posterior Modes' 2024).
-
-            Notes
-            -----
-            Unlike the majority of implemented resampling schemes this function returns a Module object so that learnable parameters may be properly registered.
-            In this case the final returned field is always a tensor containing a single zero.
-
-            Parameters
-            ----------
-            kernel: Distribution
-                The kernel to convolve over the particles to form the KDE sampling distribution.
-            generator: torch.Generator
-                The generator to track the random state of the resampling process.
-
-            Returns
-            -------
-            kernel_resampler: Resampler:
-                A Module whose forward method implements kernel resampling.
-        """
         super().__init__()
         self.mixture = kernel
         self.cache = {}
         self._need_weight_output = True
 
     def forward(self, state: Tensor, weight: Tensor, **data):
-        """Run the kernel transport resampler."""
+        """Run the kernel resampler."""
         with torch.no_grad():
             new_state = self.mixture.sample(state, weight, sample_size=(state.size(1),))
             self.cache = self.mixture.resampler.cache
@@ -382,3 +391,117 @@ class KernelResampler(Module):
             return new_state, torch.full(weight.size(), -log(weight.size(1)), device=weight.device, dtype=weight.dtype)
 
         return new_state
+
+
+class DiffusionResampler(Module):
+    r"""
+    Diffusion resampling [1]_.
+
+    Diffusion resampling constructs a backward diffusion from a reference
+    distribution to the weighted posterior. The forward diffusion is
+    represented by a Langevin SDE:
+
+    .. math::
+
+        dX(s) = b^{2} \nabla \log \pi_{\text{ref}}(X(s)) \, ds
+                + \sqrt{2}\, b \, dW(s)
+
+    .. math::
+
+        X(0) \sim \sum_{i=1}^{N} w^{(i)}_{t} \, \delta_{x^{(i)}_{t}}
+
+    In this implementation we restrict the reference distribution
+    :math:`\pi_{\text{ref}}` to be Gaussian. Specifically, we fit a Gaussian
+    distribution with independent dimensions to the weighted posterior.
+    The backward diffusion's drift and diffusion coefficients are then
+    analytically available at any time :math:`s`.
+
+    Parameters
+    ----------
+    alpha: float
+        The noising strength, determines the size of the forward diffusion coefficient, must be negative. More negative alpha corresponds to a faster forward diffusion.
+    diffusion_time: float
+        The maximum time of the forward diffusion. If a schedule is provided then i.e. schedule is not None then this parameter is ignored.
+    n_steps: int
+        The number of EM integrator steps to use in total. If a schedule is provided then i.e. schedule is not None then this parameter is ignored.
+    schedule: (S,) Tensor or None, Default: None
+        The discrete times at which the EM integrator is evaluated. If schedule is None then the integrator schedule is set to the n_steps + 1 uniformly spaced points in [0, diffusion_time].
+    jitter: float, Default: 0.
+        A tolerance parameter to ensure numerical stability if the covariance of the weighted posterior is very small. Must be non-negative.
+
+    Notes
+    -----
+    Our implementation follows the code in the repository accompanying [1]_, and has a number of small differences to the pseudocode in their paper.
+    In [1]_ various SDE solvers are experimented with and a deterministic ODE that approximates the SDE is tried.
+    Currently, we only implement the Euler-Maruyama integrator for the SDE formulation.
+
+    References
+    ----------
+    .. [1] Andersson and Zhao, *Diffusion differentiable resampling*, 2025.
+    """
+
+    def __init__(self, alpha, diffusion_time, n_steps, generator, schedule = None, jitter = 0.):
+        super().__init__()
+        if alpha >= 0:
+            raise ValueError("alpha must be negative.")
+        if jitter < 0:
+            raise ValueError("jitter must be non-negative.")
+        self.alpha = alpha
+        if schedule is None:
+            self.T = diffusion_time
+            self.n_steps = n_steps
+            self.ts = torch.linspace(0., diffusion_time, n_steps + 1, device=generator.device)
+        else:
+            self.T = schedule[-1]
+            self.n_steps = schedule.shape[0] - 1
+            self.ts = schedule
+        self.jitter = jitter
+
+        self.dist = StandardGaussian(1, generator=generator)
+
+
+    def log_pdf(self, x, mu, sigma):
+        norm_x = (x - mu)/sigma
+        out = self.dist.log_density(norm_x.unsqueeze(-1))
+        return out - torch.log(sigma)
+
+    def forward(self, state, weight, **data):
+        """Run the diffusion resampler."""
+        a = self.alpha
+        n = weight.shape[1]
+        ws = torch.exp(weight)
+        mu = torch.sum(ws[..., None] * state, dim=1, keepdim=True)
+        stat_vars = torch.sum(ws[..., None] * ((state - mu) ** 2), dim=1, keepdim=True) + self.jitter
+        if torch.all(stat_vars < 1e-6):
+            return state.clone(), weight.clone()
+        b2 = -stat_vars * a * 2
+
+        def fwd_coeffs(t):
+            semigroup = torch.exp(a * t)
+            sig2t =  multiple_unsqueeze((1 - torch.exp(2 * a * t)), 3)*stat_vars.unsqueeze(0)
+            return semigroup, sig2t
+
+
+        def logpdf_trans(x, mts, sig2ts):
+            """(...,), (n, ...), (n, ...) -> (n, )"""
+            #normalised_state = (state - mts)/sig2ts
+            return torch.sum(self.log_pdf(x, mts, sig2ts ** 0.5), dim=-1)
+
+
+        def s(x, sg, sig2ts):
+            """Ensemble score"""
+            mts = state * sg + mu * (1 - sg)
+            log_alps = weight + logpdf_trans(x, mts, sig2ts)
+            log_alps, _ = normalise(log_alps)
+            return torch.sum(torch.exp(log_alps)[..., None].unsqueeze(2) * (-(x.unsqueeze(1) - mts.unsqueeze(2)) / sig2ts.unsqueeze(2)), dim=1)
+
+        def drift(x, sg, sig2ts):
+            return b2 * s(x, sg, sig2ts) + a * (mu - x)
+
+        sgs, sig2ts = fwd_coeffs(self.T - self.ts)
+        x_o = mu + (stat_vars ** 0.5) * self.dist.sample((mu.size(0), n, mu.size(2))).squeeze(-1)
+        rng = self.dist.sample((self.n_steps, *x_o.shape)).squeeze(-1)
+        dts = self.ts[1:] - self.ts[:-1]
+        for i in range(self.n_steps):
+            x_o = x_o + drift(x_o, sgs[i], sig2ts[i]) * dts[i] + rng[i] * (dts[i] * b2) ** 0.5
+        return x_o, torch.full_like(weight, -log(n))

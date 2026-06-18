@@ -2,12 +2,14 @@ import sys
 import os
 import inspect
 import pkgutil
+import shutil
 import importlib
 from sphinx.util import logging
 from sphinx.ext.autodoc import PropertyDocumenter
 sys.path.insert(0, os.path.abspath('../../pydpf/'))
 from pydpf.base import cached_property, constrained_parameter
 
+autosummary_generate = True
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +58,8 @@ def generate_api_pages():
     api_dir = os.path.join(scr_dir, "api")
 
     os.makedirs(api_dir, exist_ok=True)
+    shutil.rmtree(api_dir, ignore_errors=True)
+    os.makedirs(api_dir, exist_ok=True)
 
     index_lines = ["API Reference", "=============\n", ".. toctree::", "   :maxdepth: 2\n"]
 
@@ -78,9 +82,9 @@ def generate_api_pages():
 
 project = 'pydpf'
 author = 'John-Joseph Brady'
-version = '1.1.3'
-release = '1.1.3'
-extensions = ['numpydoc', "sphinx.ext.autodoc", 'sphinx.ext.mathjax', 'sphinx_rtd_theme', 'sphinx.ext.coverage', "sphinx.ext.autosummary", "sphinx.ext.napoleon"]
+version = '1.2.0'
+release = '1.2.0'
+extensions = ["numpydoc", "sphinx.ext.autodoc", 'sphinx.ext.mathjax', 'sphinx_rtd_theme', 'sphinx.ext.coverage', "sphinx.ext.autosummary", "sphinx.ext.napoleon"]
 
 autodoc_default_options = {
     "members": True,
@@ -126,4 +130,3 @@ html_theme_options = {
 
 generate_api_pages()
 
-autosummary_generate = True

@@ -132,7 +132,7 @@ class constrained_parameter:
         setattr(instance, self.value_name, v)
         instance.disallow_set_values = True
 
-    def __set__(self):
+    def __set__(self, *args, **kwargs):
         raise AttributeError("Cannot directly set a constrained parameter.")
 
 
@@ -167,5 +167,5 @@ class cached_property:
         if hasattr(instance, self.value_name):
             delattr(instance, self.value_name)
 
-    def __set__(self, instance):
+    def __set__(self, *args, **kwargs):
         raise AttributeError("Cannot directly set a cached property, update the underlying data instead.")

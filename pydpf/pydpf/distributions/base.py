@@ -32,7 +32,7 @@ class Distribution(Module, metaclass=ABCMeta):
         """Check that the sample matches the defined dimension of the distribution."""
         if sample.size(-1) != self.dim:
             raise ValueError(f"Sample must have dimension equal to dimensionality of distribution, found {sample.size(-1)} and {self.dim}")
-        if sample.device != sample.device:
+        if sample.device != self.device:
             raise ValueError(f"Sample must have device equal to device of distribution parameters, found {sample.device} and {self.device}")
 
     @staticmethod

@@ -19,7 +19,7 @@ def ClipByElement(clip_threshold: float) -> torch.autograd.Function:
 
         @staticmethod
         def backward(ctx: Any, dstate:Tensor, dweight:Any):
-            return torch.clip(dstate, clip_threshold, clip_threshold), torch.clip(dweight, -clip_threshold, clip_threshold), None
+            return torch.clip(dstate, -clip_threshold, clip_threshold), torch.clip(dweight, -clip_threshold, clip_threshold), None
 
     return _ClipByElement
 

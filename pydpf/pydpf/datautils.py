@@ -437,7 +437,7 @@ def _format_to_save(state, observation, control, time):
     columns_list = [[f'state_{i + 1}' for i in range(state.size(-1))], [f'observation_{i + 1}' for i in range(observation.size(-1))]]
     if control is not None:
         data_list.append(control.cpu().numpy())
-        columns_list.append([f'control_{i + 1}' for i in range(state.size(-1))])
+        columns_list.append([f'control_{i + 1}' for i in range(control.size(-1))])
     if time is not None:
         data_list.append(time.unsqueeze(-1).cpu().numpy())
         columns_list.append(['time'])

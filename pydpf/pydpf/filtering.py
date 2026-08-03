@@ -220,22 +220,37 @@ class ParticleFilter(SIS):
         if resampler is not None:
             self._register_functions(resampler=resampler, SSM=SSM)
 
+
+    @staticmethod
+    def _get_fitness_func(SSM):
+        if hasattr(SSM.observation_model, "score"):
+            obs_fitness_func = SSM.observation_model.score
+        elif hasattr(SSM.observation_model, "fitness"):
+            obs_fitness_func = SSM.observation_model.fitness
+        else:
+            if isinstance(SSM, FilteringModel):
+                raise AttributeError('SSM.observation_model does not have a `fitness` or `score` attribute. This should not happen. If you have subclassed pydpf.FilteringModel please check you have not overwritten error checking. ')
+            else:
+                raise AttributeError('SSM.observation_model does not have a `fitness` or `score` attribute. SSM is not a pydpf.FilteringModel. Define the `fitness` method and ensure that the parameter SSM is a FilteringModel.')
+        return obs_fitness_func
+
     @staticmethod
     def _make_PF_prior(SSM, REINFORCE_i:bool):
+        obs_fitness_func = ParticleFilter._get_fitness_func(SSM)
         if SSM.has_initial_proposal:
             if REINFORCE_i:
                 def prior(n_particles, observation, **data):
                     with torch.no_grad():
                         state = SSM.initial_proposal_model.sample(batch_size = observation.size(0), n_particles = n_particles, observation=observation, **data)
                         prop_density = SSM.initial_proposal_model.log_density(state = state, observation = observation, **data)
-                    weight = (SSM.observation_model.score(state = state, observation = observation, **data)
+                    weight = (obs_fitness_func(state = state, observation = observation, **data)
                               - prop_density
                               + SSM.prior_model.log_density(state = state, **data))
                     return state, weight
             else:
                 def prior(n_particles, observation, **data):
                     state = SSM.initial_proposal_model.sample(batch_size = observation.size(0), n_particles = n_particles, observation=observation, **data)
-                    weight = (SSM.observation_model.score(state = state, observation = observation, **data)
+                    weight = (obs_fitness_func(state = state, observation = observation, **data)
                               - SSM.initial_proposal_model.log_density(state = state, observation = observation, **data)
                               + SSM.prior_model.log_density(state = state, **data))
                     return state, weight
@@ -245,32 +260,33 @@ class ParticleFilter(SIS):
                     with torch.no_grad():
                         state = SSM.prior_model.sample(batch_size = observation.size(0), n_particles = n_particles, **data)
                     density = SSM.prior_model.log_density(state = state, **data)
-                    weight = SSM.observation_model.score(state = state, observation = observation, **data) + density - density.detach()
+                    weight = obs_fitness_func(state = state, observation = observation, **data) + density - density.detach()
                     return state, weight
             else:
                 def prior(n_particles, observation, **data):
                     state = SSM.prior_model.sample(batch_size = observation.size(0), n_particles = n_particles, **data)
-                    weight = SSM.observation_model.score(state = state, observation = observation, **data)
+                    weight = obs_fitness_func(state = state, observation = observation, **data)
                     return state, weight
 
         return prior
 
     @staticmethod
     def _make_PF_proposal(SSM, REINFORCE:bool):
+        obs_fitness_func = ParticleFilter._get_fitness_func(SSM)
         if SSM.has_proposal:
             if REINFORCE:
                 def prop(prev_state, prev_weight, observation, **data):
                     with torch.no_grad():
                         new_state = SSM.proposal_model.sample(prev_state = prev_state, observation=observation, **data)
                         prop_density = SSM.proposal_model.log_density(state = new_state, prev_state = prev_state, observation = observation, **data)
-                    new_weight = (prev_weight + SSM.observation_model.score(state = new_state, observation = observation, **data)
+                    new_weight = (prev_weight + obs_fitness_func(state = new_state, observation = observation, **data)
                                   - prop_density
                                   + SSM.dynamic_model.log_density(state = new_state, prev_state = prev_state, **data))
                     return new_state, new_weight
             else:
                 def prop(prev_state, prev_weight, observation, **data):
                     new_state = SSM.proposal_model.sample(prev_state = prev_state, observation=observation, **data)
-                    new_weight = (prev_weight + SSM.observation_model.score(state = new_state, observation = observation, **data)
+                    new_weight = (prev_weight + obs_fitness_func(state = new_state, observation = observation, **data)
                                   - SSM.proposal_model.log_density(state = new_state, prev_state = prev_state, observation = observation, **data)
                                   + SSM.dynamic_model.log_density(state = new_state, prev_state = prev_state, **data))
                     return new_state, new_weight
@@ -280,12 +296,12 @@ class ParticleFilter(SIS):
                     with torch.no_grad():
                         new_state = SSM.dynamic_model.sample(prev_state = prev_state, **data)
                     density = SSM.dynamic_model.log_density(state=new_state, prev_state=prev_state, **data)
-                    new_weight = prev_weight + SSM.observation_model.score(state=new_state, observation = observation, **data) + density - density.detach()
+                    new_weight = prev_weight + obs_fitness_func(state=new_state, observation = observation, **data) + density - density.detach()
                     return new_state, new_weight
             else:
                 def prop(prev_state, prev_weight, observation, **data):
                     new_state = SSM.dynamic_model.sample(prev_state = prev_state, **data)
-                    new_weight = prev_weight + SSM.observation_model.score(state=new_state, observation = observation, **data)
+                    new_weight = prev_weight + obs_fitness_func(state=new_state, observation = observation, **data)
                     return new_state, new_weight
 
         return prop
@@ -387,6 +403,7 @@ class MarginalParticleFilter(SIS):
             self._register_functions(resampler=resampler, SSM=SSM)
 
 
+
     def forward(self, *args, **kwargs):
         if self.optimise and not torch.is_grad_enabled():
             return self.PF.forward(*args, **kwargs)
@@ -395,6 +412,7 @@ class MarginalParticleFilter(SIS):
 
     @staticmethod
     def _make_MPF_proposal(SSM, resampler, REINFORCE, optimise) -> Callable:
+        obs_fitness_func = ParticleFilter._get_fitness_func(SSM)
 
         if SSM.has_proposal:
             if REINFORCE:
@@ -408,7 +426,7 @@ class MarginalParticleFilter(SIS):
                     dynamic_log_density = SSM.dynamic_model.log_density(state=expanded_state, prev_state=expanded_prev_state, **data).reshape(state.size(0), state.size(1), state.size(1))
                     with torch.no_grad():
                         proposal_log_density = SSM.proposal_model.log_density(state=expanded_state, prev_state=expanded_prev_state, observation=observation, **data).reshape(state.size(0), state.size(1), state.size(1))
-                    obs_score = SSM.observation_model.score(state=state, observation=observation, **data)
+                    obs_score = obs_fitness_func(state=state, observation=observation, **data)
                     weight = (torch.logsumexp(prev_weight.unsqueeze(1) + dynamic_log_density, dim=-1)
                               - torch.logsumexp(used_weight.unsqueeze(1) + proposal_log_density, dim=-1)
                               + obs_score)
@@ -422,7 +440,7 @@ class MarginalParticleFilter(SIS):
                     expanded_state = state.unsqueeze(2).expand(-1, -1, state.size(1), -1).flatten(1, 2)
                     dynamic_log_density = SSM.dynamic_model.log_density(state=expanded_state, prev_state=expanded_prev_state, **data).reshape(state.size(0), state.size(1), state.size(1))
                     proposal_log_density = SSM.proposal_model.log_density(state=expanded_state, prev_state=expanded_prev_state, observation=observation, **data).reshape(state.size(0), state.size(1), state.size(1))
-                    obs_score = SSM.observation_model.score(state=state, observation=observation, **data)
+                    obs_score = obs_fitness_func(state=state, observation=observation, **data)
                     weight = (torch.logsumexp(prev_weight.unsqueeze(1) + dynamic_log_density, dim=-1)
                               - torch.logsumexp(used_weight.unsqueeze(1) + proposal_log_density, dim=-1)
                               + obs_score)
@@ -438,7 +456,7 @@ class MarginalParticleFilter(SIS):
                     expanded_prev_state = prev_state.unsqueeze(1).expand(-1, state.size(1), -1, -1).flatten(1, 2)
                     expanded_state = state.unsqueeze(2).expand(-1, -1, state.size(1), -1).flatten(1, 2)
                     dynamic_log_density = SSM.dynamic_model.log_density(state=expanded_state, prev_state=expanded_prev_state, **data).reshape(state.size(0), state.size(1), state.size(1))
-                    obs_score = SSM.observation_model.score(state=state, observation=observation, **data)
+                    obs_score = obs_fitness_func(state=state, observation=observation, **data)
                     detach_dynamic = dynamic_log_density.detach()
                     weight = (torch.logsumexp(prev_weight.unsqueeze(1) + dynamic_log_density, dim=-1)
                               - torch.logsumexp(used_weight.unsqueeze(1) + detach_dynamic, dim=-1)
@@ -452,7 +470,7 @@ class MarginalParticleFilter(SIS):
                         state = SSM.dynamic_model.sample(prev_state=resampled_state, **data)
                         expanded_prev_state = prev_state.unsqueeze(1).expand(-1, state.size(1), -1, -1).flatten(1, 2)
                         expanded_state = state.unsqueeze(2).expand(-1, -1, state.size(1), -1).flatten(1, 2)
-                        obs_score = SSM.observation_model.score(state=state, observation=observation, **data)
+                        obs_score = obs_fitness_func(state=state, observation=observation, **data)
                         # Detach to save computing redundant gradient terms.
                         with torch.no_grad():
                             dynamic_log_density = SSM.dynamic_model.log_density(state=expanded_state, prev_state=expanded_prev_state, **data).reshape(state.size(0), state.size(1), state.size(1))
@@ -468,7 +486,7 @@ class MarginalParticleFilter(SIS):
                         expanded_prev_state = prev_state.unsqueeze(1).expand(-1, state.size(1), -1, -1).flatten(1, 2)
                         expanded_state = state.unsqueeze(2).expand(-1, -1, state.size(1), -1).flatten(1, 2)
                         dynamic_log_density = SSM.dynamic_model.log_density(state=expanded_state, prev_state=expanded_prev_state, **data).reshape(state.size(0), state.size(1), state.size(1))
-                        obs_score = SSM.observation_model.score(state=state, observation=observation, **data)
+                        obs_score = obs_fitness_func(state=state, observation=observation, **data)
                         weight = (torch.logsumexp(prev_weight.unsqueeze(1) + dynamic_log_density, dim=-1)
                                   - torch.logsumexp(used_weight.unsqueeze(1) + dynamic_log_density, dim=-1)
                                   + obs_score)

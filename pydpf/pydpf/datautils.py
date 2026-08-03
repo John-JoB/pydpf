@@ -586,7 +586,7 @@ def simulate_and_save(data_path: Union[Path, str],
 
     with torch.inference_mode():
         for batch in range(n_batches):
-            print(f'Generating batch {batch + 1}/{n_batches}', end = '\r')
+            print(f'Generating data: Generating batch {batch + 1}/{n_batches}', end = '\r')
             if batch == (n_trajectories // batch_size):
                 if control is not None:
                     batch_control = control[:, batch * batch_size:]
@@ -643,7 +643,7 @@ def simulate_and_save(data_path: Union[Path, str],
             _save_file_csv(data_path, state, observation, t_control, t_time)
     if series_metadata is not None:
         _save_metadata_csv(series_metadata_path, series_metadata)
-    print('Done                  \n')
+    print('Generating data: Done                                       \n')
     return 1
 
 

@@ -2,13 +2,14 @@
 from .base import Module
 from torch import Tensor
 from .distributions import Distribution
+from warnings import warn
 
 class _obs_from_model(Module):
     def __init__(self, dist:Distribution):
         super().__init__()
         self.dist = dist
 
-    def score(self, state:Tensor, observation:Tensor, **data) -> Tensor:
+    def fitness(self, state:Tensor, observation:Tensor, **data) -> Tensor:
         return self.dist.log_density(sample = observation.unsqueeze(1), condition_on=state)
 
     def sample(self, state:Tensor, **data) -> Tensor:
@@ -125,9 +126,18 @@ class FilteringModel(Module):
             self.proposal_model = _dyn_from_model(proposal_model)
         else:
                 self.proposal_model = proposal_model
-        if not hasattr(self.observation_model, 'score'):
+
+        if hasattr(self.observation_model, 'score'):
+            if hasattr(self.observation_model, 'fitness'):
+                AttributeError("The observation model must not implement both a 'score' and a 'fitness' method.")
+            warn("Using 'score' is deprecated. The label 'fitness' is preferred for new code.", FutureWarning, stacklevel=2)
+
+        if not hasattr(self.observation_model, 'score') and not hasattr(self.observation_model, 'fitness'):
             raise AttributeError("The observation model must implement a 'score' method")
-        
+
+        if  hasattr(self.observation_model, 'score') and hasattr(self.observation_model, 'fitness'):
+            raise AttributeError("The observation model must not implement both a 'score' and a 'fitness' method")
+
         if self.proposal_model is None:
             if not hasattr(self.dynamic_model, 'sample'):
                 raise AttributeError("The dynamic model must implement a 'sample' method")

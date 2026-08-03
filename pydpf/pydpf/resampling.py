@@ -475,6 +475,7 @@ class DiffusionResampler(Module):
         if torch.all(stat_vars < 1e-6):
             return state.clone(), weight.clone()
         b2 = -stat_vars * a * 2
+        self.cache['used_weight'] = weight
 
         def fwd_coeffs(t):
             semigroup = torch.exp(a * t)

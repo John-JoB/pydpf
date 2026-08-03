@@ -71,6 +71,10 @@ instance/
 # Sphinx documentation
 docs/_build/
 
+#Unused data
+jss_examples/data_/
+
+
 # PyBuilder
 .pybuilder/
 target/

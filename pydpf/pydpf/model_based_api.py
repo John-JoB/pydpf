@@ -133,10 +133,7 @@ class FilteringModel(Module):
             warn("Using 'score' is deprecated. The label 'fitness' is preferred for new code.", FutureWarning, stacklevel=2)
 
         if not hasattr(self.observation_model, 'score') and not hasattr(self.observation_model, 'fitness'):
-            raise AttributeError("The observation model must implement a 'score' method")
-
-        if  hasattr(self.observation_model, 'score') and hasattr(self.observation_model, 'fitness'):
-            raise AttributeError("The observation model must not implement both a 'score' and a 'fitness' method")
+            raise AttributeError("The observation model must implement a 'fitness' method")
 
         if self.proposal_model is None:
             if not hasattr(self.dynamic_model, 'sample'):

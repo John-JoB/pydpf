@@ -456,7 +456,7 @@ class DiffusionResampler(Module):
             self.n_steps = schedule.shape[0] - 1
             self.ts = schedule
         self.jitter = jitter
-
+        self.cache = {}
         self.dist = StandardGaussian(1, generator=generator)
 
 

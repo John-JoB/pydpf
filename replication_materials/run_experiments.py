@@ -83,7 +83,7 @@ RESULTS_DIR = ROOT / "results"
 
 # The differentiable particle filters available in (most) experiments.
 DPF_METHODS = ["DPF", "Soft", "Stop-Gradient", "Marginal Stop-Gradient",
-               "Optimal Transport", "Kernel", "Diffusion"]
+               "Optimal Transport", "Kernel"]
 
 
 # --------------------------------------------------------------------------- #
@@ -198,8 +198,6 @@ def build_dpf(method, SSM, generator, *, soft_softness=None, ot_regularisation=0
         if kernel_factory is None:
             raise ValueError("A kernel_factory is required to build a KernelDPF")
         return pydpf.KernelDPF(SSM=SSM, kernel=kernel_factory(generator))
-    if method == "Diffusion":
-        return pydpf.DiffusionDPF(SSM=SSM, resampling_generator=generator, jitter=1e-5, n_steps=8)
     raise ValueError("method should be one of the allowed options")
 
 

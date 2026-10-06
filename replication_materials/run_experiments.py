@@ -83,7 +83,7 @@ RESULTS_DIR = ROOT / "results"
 
 # The differentiable particle filters available in (most) experiments.
 DPF_METHODS = ["DPF", "Soft", "Stop-Gradient", "Marginal Stop-Gradient",
-               "Optimal Transport", "Kernel"]
+               "Optimal Transport", "Kernel", "Diffusion"]
 
 
 # --------------------------------------------------------------------------- #
@@ -109,6 +109,40 @@ def make_new_csv(rows, columns, name, string_columns=(), overwrite=False):
     for col in string_columns:
         df[col] = ""
     df.to_csv(name)
+
+def check_for_populated_row(loc, row_name, cols = None):
+    """Check if a row of a table is fully populated."""
+    df = pd.read_csv(loc, dtype=str, keep_default_na=False, index_col=0)
+    row_name = str(row_name)
+    cols = list(cols) if cols is not None else list(df.columns)
+    unknown = [c for c in cols if c not in df.columns]
+    if unknown:
+        raise KeyError(f"Columns not in CSV: {unknown}")
+    if not row_name in df.index:
+        raise IndexError(f"Row {row_name} not found in {loc}")
+
+    return bool((df.loc[row_name][cols].str.strip() != "").all())
+
+
+def run_methods(run_fun, methods, experiment_name, results_loc, overwrite_results, cols = None):
+    failures = []
+    for method in methods:
+        method_label = method
+        if method is None:
+            method_label = "Kalman Filter"
+        if not isinstance(method_label, str):
+            method_label = f"PF K = {method}"
+        if (not overwrite_results) and check_for_populated_row(results_loc, method_label, cols):
+            print(f"\nSkipping {method_label}: results already stored, run again with flag --overwrite-results if you want to recompute them.")
+            continue
+        print(f"\nRunning {method_label} on {experiment_name}")
+        try:
+            run_fun(method)
+        except Exception as e:
+            print(f"\n!! Experiment {experiment_name}:{method_label} failed:")
+            traceback.print_exc()
+            failures.append(method_label)
+    return failures
 
 
 def _get_split_amounts(split, data_length):
@@ -164,6 +198,8 @@ def build_dpf(method, SSM, generator, *, soft_softness=None, ot_regularisation=0
         if kernel_factory is None:
             raise ValueError("A kernel_factory is required to build a KernelDPF")
         return pydpf.KernelDPF(SSM=SSM, kernel=kernel_factory(generator))
+    if method == "Diffusion":
+        return pydpf.DiffusionDPF(SSM=SSM, resampling_generator=generator, jitter=1e-5, n_steps=8)
     raise ValueError("method should be one of the allowed options")
 
 
@@ -890,7 +926,7 @@ class RunConfig:
     def __init__(self, device, data_dir, results_dir, smoke=False,
                  dx=25, dy=1, alpha=0.91, beta=0.5, sigma=1.0, batch_size=128,
                  maze_deterministic=("deterministic",), maze_repeats=1, delete_raw=False,
-                 overwrite_results=False):
+                 overwrite_results=False, clear_results=False):
         self.device = torch.device(device)
         self.data_dir = pathlib.Path(data_dir)
         self.results_dir = pathlib.Path(results_dir)
@@ -905,6 +941,7 @@ class RunConfig:
         self.maze_deterministic = maze_deterministic
         self.maze_repeats = maze_repeats
         self.delete_raw = delete_raw
+        self.clear_results = clear_results
 
     def pick(self, paper, smoke):
         """Return the reduced value in --smoke mode, otherwise the paper value."""
@@ -991,7 +1028,7 @@ def prepare_sv_test_trajectory(cfg):
 
 def _download_maze_dataset(folder_path):
     """Download + unpack the raw maze data (mirrors dm_setup.download_dataset)."""
-    import requests  # imported lazily; only needed when the maze data is missing
+    import requests
     from tqdm import tqdm
     import zipfile
 
@@ -1092,15 +1129,16 @@ def prepare_maze_data(cfg):
 # --------------------------------------------------------------------------- #
 
 def run_kalman(cfg, requseted_models):
-    run_kalman_help(cfg, requseted_models)
     device = cfg.device
+    failures = [f"{device.type}_({m})" for m in run_kalman_help(cfg, requseted_models)]
     if device.type == "cuda":
         copied_cfg = copy(cfg)
         copied_cfg.device = torch.device("cpu")
-        run_kalman_help(copied_cfg, requseted_models)
+        failures = failures + [f"cpu_({m})" for m in run_kalman_help(copied_cfg, requseted_models, False)]
+    return failures
 
 
-def run_kalman_help(cfg, requested_models):
+def run_kalman_help(cfg, requested_models, save_accuracy=True):
     device = cfg.device
     print(f"\n=== Linear Gaussian: comparison with the Kalman filter on {device.type}===")
     data_path = prepare_lg_data(cfg)
@@ -1110,7 +1148,7 @@ def run_kalman_help(cfg, requested_models):
 
     make_new_csv(["Kalman Filter", "PF K = 25", "PF K = 100", "PF K = 1000", "PF K = 10000"],
                  ["Time CPU (s)", "Time GPU (s)", "epsilon x", "epsilon y"],
-                 results_file, overwrite=cfg.overwrite_results)
+                 results_file, overwrite=cfg.clear_results)
 
     dx, dy = cfg.dx, cfg.dy
     cuda = cfg.device.type == "cuda"
@@ -1146,8 +1184,7 @@ def run_kalman_help(cfg, requested_models):
         def tqdm(x, **k):
             return x
 
-    for K in Ks:
-        print(f"\nRunning with {K} particles")
+    def run_kalman_method(K):
         size = 0
         state_error = []
         kalman_time = []
@@ -1184,23 +1221,38 @@ def run_kalman_help(cfg, requested_models):
         if cuda:
             if K is None:
                 kalman_row[1] = sum(kalman_time[1:-1]) / denom
-                kalman_row[2] = 0.0
-                kalman_row[3] = 0.0
             else:
                 row[1] = sum(pf_time[1:-1]) / denom
-                row[2] = sum(state_error) / size
-                row[3] = sum(likelihood_error) / size
         else:
             if K is None:
                 kalman_row[0] = sum(kalman_time[1:-1]) / denom
             else:
                 row[0] = sum(pf_time[1:-1]) / denom
+        if save_accuracy:
+            if K is None:
+                kalman_row[2] = 0.0
+                kalman_row[3] = 0.0
+            else:
+                row[2] = sum(state_error) / size
+                row[3] = sum(likelihood_error) / size
 
         if K is not None:
             results_df.loc[row_label] = row
         results_df.loc["Kalman Filter"] = kalman_row
         results_df.to_csv(results_file)
+
+    active_columns = []
+    if cuda:
+        active_columns.append("Time GPU (s)")
+    else:
+        active_columns.append("Time CPU (s)")
+    if save_accuracy:
+        active_columns.append("epsilon x")
+        active_columns.append("epsilon y")
+    failures = run_methods(run_kalman_method, Ks, "Kalman Comparison", results_file, cfg.overwrite_results, active_columns)
     print(pd.read_csv(results_file, index_col=0))
+    return failures
+
 
 
 # --------------------------------------------------------------------------- #
@@ -1214,7 +1266,7 @@ def run_proposal(cfg, requested_models):
     if cfg.smoke:
         results_file = results_file.with_stem(results_file.stem + "_smoke")
     make_new_csv(["Bootstrap", "Optimal"] + DPF_METHODS, ["e_x", "e_l", "mean W2", "ELBO"],
-                 results_file, overwrite=cfg.overwrite_results)
+                 results_file, overwrite=cfg.clear_results)
 
     dx, dy = cfg.dx, cfg.dy
     device = cfg.device
@@ -1263,9 +1315,12 @@ def run_proposal(cfg, requested_models):
                 ELBO = dpf(cfg.pick(100,2), cfg.pick(100,2), ELBO_fun, observation=observation)
                 loss = torch.mean(ELBO)
                 loss.backward()
+                #for n,param in dpf.named_parameters():
+                 #   print(n, param.grad)
                 opt.step()
                 total_size += state.size(1)
                 opt_scheduler.step()
+                #print("step")
             dpf.eval()
             dpf.update()
             total_size = 0
@@ -1345,8 +1400,7 @@ def run_proposal(cfg, requested_models):
     dataset = pydpf.StateSpaceDataset(data_path=data_path, series_id_column="series_id",
                                       state_prefix="state", observation_prefix="observation", device=device)
 
-    for experiment in experiment_list:
-        print(f"\nRunning {experiment}")
+    def run_method_prop(experiment):
         rep_mean_wass_dist = torch.tensor(0., device=device)
         mean_epsilon_l = 0
         mean_epsilon_x = 0
@@ -1398,6 +1452,7 @@ def run_proposal(cfg, requested_models):
         results_df.to_csv(results_file)
         print(results_df)
 
+    return run_methods(run_method_prop, experiment_list, "proposal", results_file, cfg.overwrite_results)
 
 # --------------------------------------------------------------------------- #
 #  Experiment 3: SV -- filtering given a fully specified model                #
@@ -1410,7 +1465,7 @@ def run_sv_filtering(cfg, requested_models):
     if cfg.smoke:
         results_file = results_file.with_stem(results_file.stem + "_smoke")
     make_new_csv(DPF_METHODS, ["e_x", "e_l", "time"], results_file,
-                 overwrite=cfg.overwrite_results)
+                 overwrite=cfg.clear_results)
 
 
     device = cfg.device
@@ -1436,8 +1491,7 @@ def run_sv_filtering(cfg, requested_models):
         def tqdm(x, **k):
             return x
 
-    for experiment in experiments:
-        print(f"Testing {experiment}")
+    def run_method_sv_filtering(experiment):
         rng = torch.Generator(device=device).manual_seed(0)
         cpu_rng = torch.Generator().manual_seed(0)
         size = 0
@@ -1474,6 +1528,7 @@ def run_sv_filtering(cfg, requested_models):
         print(results)
         results.to_csv(results_file)
 
+    return run_methods(run_method_sv_filtering, experiments, "sv_filtering", results_file, cfg.overwrite_results)
 
 # --------------------------------------------------------------------------- #
 #  Experiment 4: SV -- unsupervised learning of a single parameter            #
@@ -1487,7 +1542,7 @@ def run_sv_single(cfg, requested_models):
         results_file = results_file.with_stem(results_file.stem + "_smoke")
     make_new_csv(DPF_METHODS, ["Forward Time (s)", "Backward Time (s)",
                                "Gradient standard deviation", "alpha error"],
-                  results_file, overwrite=cfg.overwrite_results)
+                  results_file, overwrite=cfg.clear_results)
 
 
     device = cfg.device
@@ -1583,8 +1638,7 @@ def run_sv_single(cfg, requested_models):
             os.remove(temp_data_path)
         return alphas
 
-    for experiment in experiments:
-        print(f"\nRunning {experiment}")
+    def run_method_sv_single(experiment):
         results = pd.read_csv(results_file, index_col=0)
         ft, bt, grads = test_gradients(experiment)
         alpha_list = test_learning_alpha(experiment)
@@ -1595,6 +1649,7 @@ def run_sv_single(cfg, requested_models):
         print(results)
         results.to_csv(results_file)
 
+    return run_methods(run_method_sv_single, experiments, "sv_single", results_file, cfg.overwrite_results)
 
 # --------------------------------------------------------------------------- #
 #  Experiment 5: SV -- unsupervised learning of multiple parameters           #
@@ -1606,7 +1661,7 @@ def run_sv_multiple(cfg, requested_models):
     if cfg.smoke:
         results_file = results_file.with_stem(results_file.stem + "_smoke")
     make_new_csv(DPF_METHODS, ["ELBO", "alpha error", "beta error", "sigma error"],
-                 results_file, overwrite=cfg.overwrite_results)
+                 results_file, overwrite=cfg.clear_results)
 
     device = cfg.device
     experiments = select_methods(requested_models, DPF_METHODS)
@@ -1629,8 +1684,7 @@ def run_sv_multiple(cfg, requested_models):
         kernel = pydpf.StandardGaussian(1, generator, False, True)
         return pydpf.KernelMixture(kernel, generator=generator)
 
-    for experiment in experiments:
-        print(f"\nRunning {experiment}")
+    def run_method_sv_multiple(experiment):
         ELBOs = np.empty(n_repeats)
         alphas = np.empty(n_repeats)
         betas = np.empty(n_repeats)
@@ -1672,7 +1726,7 @@ def run_sv_multiple(cfg, requested_models):
                                             np.mean(np.abs(betas - 0.5)), np.mean(np.abs(sigmas - 1.))])
         results.to_csv(results_file)
         print(results)
-
+    return run_methods(run_method_sv_multiple, experiments, "sv_multiple", results_file, cfg.overwrite_results)
 
 # --------------------------------------------------------------------------- #
 #  Experiment 6: Deep-mind maze -- deep learning                              #
@@ -1696,6 +1750,8 @@ def run_maze(cfg, requested_models):
     def flatten_gens(list_of_gens):
         return [item for gen in list_of_gens for item in gen]
 
+    failures = []
+
     for det_label in cfg.maze_deterministic:
         deterministic = det_label == "deterministic"
         results_file = ("deep_mind_maze_results.csv" if deterministic
@@ -1704,92 +1760,93 @@ def run_maze(cfg, requested_models):
             results_file= results_file[:-4] + "_smoke.csv"
 
         result_path = cfg.results_dir / results_file
-        make_new_csv(DPF_METHODS, ["Total time (hrs:min:s)", "Test MSE"],
-                     result_path, string_columns=["Total time (hrs:min:s)"], overwrite=cfg.overwrite_results)
+        make_new_csv(DPF_METHODS, ["Total time (hrs:min:s)", "Test RMSE"],
+                     result_path, string_columns=["Total time (hrs:min:s)"], overwrite=cfg.clear_results)
         print(f"\n--- {'deterministic' if deterministic else 'non-deterministic'} run ---")
 
+
+        def run_method_maze(DPF_type):
+            total_MSE = 0
+            total_time = 0
+            for i in range(n_repeats):
+                cuda_gen = torch.Generator(device=device).manual_seed(i * 10)
+
+                def get_SSM():
+                    encoder = ObservationEncoder(observation_encoding_size, generator=cuda_gen, dropout_keep_ratio=0.3)
+                    decoder = ObservationDecoder(observation_encoding_size, generator=cuda_gen, dropout_keep_ratio=0.3)
+                    state_encoder = StateEncoder(state_encoding_size, generator=cuda_gen, dropout_keep_ratio=0.6)
+                    observation_partial_flows = [
+                        RealNVP_cond(dim=observation_encoding_size, hidden_dim=observation_encoding_size,
+                                     condition_on_dim=state_encoding_size, generator=cuda_gen, zero_i=True),
+                        RealNVP_cond(dim=observation_encoding_size, hidden_dim=observation_encoding_size,
+                                     condition_on_dim=state_encoding_size, generator=cuda_gen, zero_i=True)]
+                    flow_cov = torch.nn.Parameter(torch.eye(observation_encoding_size, device=device) * 1,
+                                                  requires_grad=False)
+                    observation_flow = NormalizingFlowModel_cond(
+                        pydpf.MultivariateGaussian(torch.zeros(observation_encoding_size, device=device),
+                                                   cholesky_covariance=flow_cov, diagonal_cov=True,
+                                                   generator=cuda_gen), observation_partial_flows, device)
+                    observation_model = MazeObservation(observation_flow, encoder, decoder, state_encoder, device=device)
+                    dynamic_cov = torch.diag(torch.tensor([30 / scaling, 30 / scaling, 0.1], device=device))
+                    dynamic_model = MazeDynamic(cuda_gen, dynamic_cov)
+                    prior_model = MazePrior(2 * 1000 / scaling, 1.3 * 1000 / scaling, cuda_gen)
+                    encoder_parameters = flatten_gens([encoder.parameters(), state_encoder.parameters(),
+                                                       decoder.parameters()])
+                    flow_parameters = flatten_gens([observation_flow.parameters(), prior_model.parameters()])
+                    SSM = pydpf.FilteringModel(dynamic_model=dynamic_model, prior_model=prior_model,
+                                               observation_model=observation_model)
+                    return SSM, encoder_parameters, flow_parameters, [flow_cov]
+
+                def maze_kernel_factory(generator):
+                    Gaussian_kernel = pydpf.StandardGaussian(3, generator, learn_mean=False, learn_cov=True)
+                    return pydpf.KernelMixture(kernel=Gaussian_kernel, generator=generator)
+
+                SSM, encoder_params, flow_params, flow_cov = get_SSM()
+                # The maze Optimal-Transport DPF uses regularisation=1.; the kernel is 3-D.
+                dpf = build_dpf(DPF_type, SSM, cuda_gen, ot_regularisation=1.,
+                                kernel_factory=maze_kernel_factory)
+                dpf.to(device)
+                if DPF_type == "Kernel":
+                    opt = torch.optim.AdamW(
+                        [{"params": encoder_params, "lr": 0.005},
+                         {"params": flow_params, "lr": 0.001},
+                         {"params": dpf.resampler.mixture.parameters(), "lr": 0.001, "weight_decay": 0}],
+                        weight_decay=1e-2, betas=(0.8, 0.99), eps=1e-9)
+                else:
+                    opt = torch.optim.AdamW(
+                        [{"params": encoder_params, "lr": 0.005}, {"params": flow_params, "lr": 0.001}],
+                        weight_decay=1e-2, betas=(0.8, 0.99), eps=1e-9)
+                opt_scheduler = torch.optim.lr_scheduler.ExponentialLR(opt, gamma=0.99)
+                data = pydpf.StateSpaceDataset(data_path=data_path, state_prefix="state",
+                                               control_prefix="control", device=device)
+                data.apply(lambda observation, **d: (observation - torch.mean(observation)) / torch.std(observation),
+                           "observation")
+                scaling_tensor = torch.tensor([[[scaling, scaling, 1.]]], device=device)
+                data.apply(lambda state, **d: (state - torch.tensor([[[1000., 650., 0.]]], device=device)) / scaling_tensor,
+                           "state")
+                data.apply(lambda control, **d: control / torch.tensor([[[scaling, scaling, 1.]]], device=device),
+                           "control")
+                print("Data Loaded")
+                start_time = time.time()
+                test_mse, _ = train_maze(dpf, opt, data, epochs, (100, 100, 100), (64, 64, 64),
+                                         (0.45, 0.2, 0.35), (1., 1., 1.),
+                                         torch.Generator().manual_seed(i * 10), None, "MSE", 99,
+                                         lr_scheduler=opt_scheduler, pre_train_epochs=0, device=device,
+                                         state_scaling=scaling)
+                total_MSE += test_mse
+                total_time += time.time() - start_time
+            MSE = total_MSE / n_repeats
+            runtime = total_time / n_repeats
+            results = pd.read_csv(result_path, index_col=0)
+            time_col = "Total time (hrs:min:s)"
+            results[time_col] = results[time_col].astype(object)
+            results.loc[DPF_type] = [str(datetime.timedelta(seconds=runtime)), math.sqrt(MSE)]
+            results[time_col] = results[time_col].fillna("")
+            print(results)
+            results.to_csv(result_path)
         with pydpf.utils.set_deterministic_mode(deterministic, True):
-            for DPF_type in methods:
-                print(f"\nRunning {DPF_type}")
-                total_MSE = 0
-                total_time = 0
-                for i in range(n_repeats):
-                    cuda_gen = torch.Generator(device=device).manual_seed(i * 10)
-
-                    def get_SSM():
-                        encoder = ObservationEncoder(observation_encoding_size, generator=cuda_gen, dropout_keep_ratio=0.3)
-                        decoder = ObservationDecoder(observation_encoding_size, generator=cuda_gen, dropout_keep_ratio=0.3)
-                        state_encoder = StateEncoder(state_encoding_size, generator=cuda_gen, dropout_keep_ratio=0.6)
-                        observation_partial_flows = [
-                            RealNVP_cond(dim=observation_encoding_size, hidden_dim=observation_encoding_size,
-                                         condition_on_dim=state_encoding_size, generator=cuda_gen, zero_i=True),
-                            RealNVP_cond(dim=observation_encoding_size, hidden_dim=observation_encoding_size,
-                                         condition_on_dim=state_encoding_size, generator=cuda_gen, zero_i=True)]
-                        flow_cov = torch.nn.Parameter(torch.eye(observation_encoding_size, device=device) * 1,
-                                                      requires_grad=False)
-                        observation_flow = NormalizingFlowModel_cond(
-                            pydpf.MultivariateGaussian(torch.zeros(observation_encoding_size, device=device),
-                                                       cholesky_covariance=flow_cov, diagonal_cov=True,
-                                                       generator=cuda_gen), observation_partial_flows, device)
-                        observation_model = MazeObservation(observation_flow, encoder, decoder, state_encoder, device=device)
-                        dynamic_cov = torch.diag(torch.tensor([30 / scaling, 30 / scaling, 0.1], device=device))
-                        dynamic_model = MazeDynamic(cuda_gen, dynamic_cov)
-                        prior_model = MazePrior(2 * 1000 / scaling, 1.3 * 1000 / scaling, cuda_gen)
-                        encoder_parameters = flatten_gens([encoder.parameters(), state_encoder.parameters(),
-                                                           decoder.parameters()])
-                        flow_parameters = flatten_gens([observation_flow.parameters(), prior_model.parameters()])
-                        SSM = pydpf.FilteringModel(dynamic_model=dynamic_model, prior_model=prior_model,
-                                                   observation_model=observation_model)
-                        return SSM, encoder_parameters, flow_parameters, [flow_cov]
-
-                    def maze_kernel_factory(generator):
-                        Gaussian_kernel = pydpf.StandardGaussian(3, generator, learn_mean=False, learn_cov=True)
-                        return pydpf.KernelMixture(kernel=Gaussian_kernel, generator=generator)
-
-                    SSM, encoder_params, flow_params, flow_cov = get_SSM()
-                    # The maze Optimal-Transport DPF uses regularisation=1.; the kernel is 3-D.
-                    dpf = build_dpf(DPF_type, SSM, cuda_gen, ot_regularisation=1.,
-                                    kernel_factory=maze_kernel_factory)
-                    dpf.to(device)
-                    if DPF_type == "Kernel":
-                        opt = torch.optim.AdamW(
-                            [{"params": encoder_params, "lr": 0.005},
-                             {"params": flow_params, "lr": 0.001},
-                             {"params": dpf.resampler.mixture.parameters(), "lr": 0.001, "weight_decay": 0}],
-                            weight_decay=1e-3, betas=(0.7, 0.98), eps=1e-9)
-                    else:
-                        opt = torch.optim.AdamW(
-                            [{"params": encoder_params, "lr": 0.005}, {"params": flow_params, "lr": 0.001}],
-                            weight_decay=1e-2, betas=(0.8, 0.99), eps=1e-9)
-                    opt_scheduler = torch.optim.lr_scheduler.ExponentialLR(opt, gamma=0.99)
-                    data = pydpf.StateSpaceDataset(data_path=data_path, state_prefix="state",
-                                                   control_prefix="control", device=device)
-                    data.apply(lambda observation, **d: (observation - torch.mean(observation)) / torch.std(observation),
-                               "observation")
-                    scaling_tensor = torch.tensor([[[scaling, scaling, 1.]]], device=device)
-                    data.apply(lambda state, **d: (state - torch.tensor([[[1000., 650., 0.]]], device=device)) / scaling_tensor,
-                               "state")
-                    data.apply(lambda control, **d: control / torch.tensor([[[scaling, scaling, 1.]]], device=device),
-                               "control")
-                    print("Data Loaded")
-                    start_time = time.time()
-                    test_mse, _ = train_maze(dpf, opt, data, epochs, (100, 100, 100), (64, 64, 64),
-                                             (0.45, 0.2, 0.35), (1., 1., 1.),
-                                             torch.Generator().manual_seed(i * 10), None, "MSE", 99,
-                                             lr_scheduler=opt_scheduler, pre_train_epochs=0, device=device,
-                                             state_scaling=scaling)
-                    total_MSE += test_mse
-                    total_time += time.time() - start_time
-                MSE = total_MSE / n_repeats
-                runtime = total_time / n_repeats
-                results = pd.read_csv(result_path, index_col=0)
-                time_col = "Total time (hrs:min:s)"
-                results[time_col] = results[time_col].astype(object)
-                results.loc[DPF_type] = [str(datetime.timedelta(seconds=runtime)), math.sqrt(MSE)]
-                results[time_col] = results[time_col].fillna("")
-                print(results)
-                results.to_csv(result_path)
-
+            failures = [f"{det_label}_{m}" for m in run_methods(run_method_maze, methods, "maze", result_path, cfg.overwrite_results)]
+    return failures
 
 # --------------------------------------------------------------------------- #
 #  Experiment 7: the short example_usage.py demonstration                     #
@@ -1862,6 +1919,13 @@ def example_make_SSM(alpha, beta, sigma, device):
 
 def run_example_usage(cfg, empty):
     print("\n=== Stochastic Volatility: example_usage demonstration ===")
+    out = cfg.results_dir / f"example_usage_parameter_errors_{cfg.pick('', 'smoke')}.pdf"
+    if out.exists():
+        if not cfg.overwrite_results:
+            print(f"\nResults for example_usage already exist, skipping experiment. Run again with flag --overwrite-results if you want to recompute them")
+            return []
+        if cfg.clear_results:
+            os.remove(out)
     device = cfg.device
     data_path = cfg.data_dir / "example_usage.csv"
 
@@ -1924,12 +1988,13 @@ def run_example_usage(cfg, empty):
         plt.legend()
         plt.xlabel("optimisation step")
         plt.ylabel("absolute parameter error")
-        out = cfg.results_dir / f"example_usage_parameter_errors_{cfg.pick('','smoke')}.pdf"
+
         plt.savefig(out)
         plt.close()
         print(f"Saved parameter-error plot to {out}")
     except Exception as exc:  # plotting is optional
         print(f"(skipping plot: {exc})")
+    return []
 
 # --------------------------------------------------------------------------- #
 #  Experiment 8: run snippets from Section 7: Advanced usage                  #
@@ -2002,8 +2067,7 @@ class BootstrapSISProp(pydpf.Module):
                                              observation=observation,
                                              **data)
         normalised_weight, norm = pydpf.normalise(fitness + prev_weight, dim=-1)
-        log_likelihood = pydpf.normalise(fitness, dim=-1)[1] - math.log(state.size(1))
-        return state, normalised_weight, norm - log_likelihood
+        return state, normalised_weight, norm
 
 def make_filter_for_example_multinomial_resampler_without_cache(SSM, device):
     res = wrap_example_multinomial_resampler_without_cache()(generator=torch.Generator(device=device))
@@ -2073,6 +2137,13 @@ def make_filter_for_example_custom_alg(SSM, device):
 #Pretty similar to run_example_usage but copied so that run_example_usage is unchanged from the paper
 def run_example_usage_generalised(cfg, name, make_filter):
     print(f"\n=== Advanced usage: testing {name} ===")
+    out = cfg.results_dir / f"{name}_parameter_errors_{cfg.pick('', 'smoke')}.pdf"
+    if out.exists():
+        if not cfg.overwrite_results:
+            print(f"\nResults for {name} already exist, skipping experiment. Run again with flag --overwrite-results if you want to recompute them")
+            return []
+        if cfg.clear_results:
+            os.remove(out)
     device = cfg.device
     data_path = cfg.data_dir / "example_usage.csv"
 
@@ -2133,12 +2204,12 @@ def run_example_usage_generalised(cfg, name, make_filter):
         plt.legend()
         plt.xlabel("optimisation step")
         plt.ylabel("absolute parameter error")
-        out = cfg.results_dir / f"{name}_parameter_errors_{cfg.pick('','smoke')}.pdf"
         plt.savefig(out)
         plt.close()
         print(f"Saved parameter-error plot to {out}")
     except Exception as exc:  # plotting is optional
         print(f"(skipping plot: {exc})")
+
 
 
 def run_advanced_usage_tests(cfg, empty):
@@ -2148,22 +2219,13 @@ def run_advanced_usage_tests(cfg, empty):
     run_example_usage_generalised(cfg, "Custom resampler with cache", make_filter_for_example_multinomial_resampler_with_cache)
     run_example_usage_generalised(cfg, "Custom filter", make_filter_for_example_custom_alg)
     print("\n=== Finished testing advanced usage snippets ===")
+    return []
 
 
 # --------------------------------------------------------------------------- #
 #  Dispatch / CLI                                                             #
 # --------------------------------------------------------------------------- #
 
-EXPERIMENTS = {
-    "kalman": run_kalman,
-    "proposal": run_proposal,
-    "sv_filtering": run_sv_filtering,
-    "sv_single": run_sv_single,
-    "sv_multiple": run_sv_multiple,
-    "maze": run_maze,
-    "example_usage": run_example_usage,
-    "advanced_usage": run_advanced_usage_tests,
-}
 
 # Methods (rows) supported by each experiment, for the --help text.
 EXPERIMENT_METHODS = {
@@ -2176,6 +2238,20 @@ EXPERIMENT_METHODS = {
     "example_usage": [],
     "advanced_usage": []
 }
+
+
+EXPERIMENTS = {
+    "kalman": run_kalman,
+    "proposal": run_proposal,
+    "sv_filtering": run_sv_filtering,
+    "sv_single": run_sv_single,
+    "sv_multiple": run_sv_multiple,
+    "maze": run_maze,
+    "example_usage": run_example_usage,
+    "advanced_usage": run_advanced_usage_tests,
+}
+
+
 
 # Run everything by default
 DEFAULT_EXPERIMENTS = ["example_usage", "advanced_usage", "kalman", "proposal", "sv_filtering", "sv_single", "sv_multiple", "maze"]
@@ -2206,9 +2282,8 @@ def build_parser():
                         help="Tiny epochs/repeats/particle counts to validate the pipeline quickly.")
     parser.add_argument("--setup-only", action="store_true",
                         help="Only prepare the central data/results folders, then exit.")
-    parser.add_argument("--overwrite-results", action="store_true",
-                        help="Recreate (blank out) the results CSVs of the selected experiments, "
-                             "even if they already exist.")
+    parser.add_argument("--clear-results", action="store_true", help="Clear all results files for the given experiments before re-populating them.")
+    parser.add_argument("--overwrite-results", action="store_true", help="By default experiments that have complete results already stored are skipped, this flag turns off this behaviour.")
     # Data-generation parameters (match the original *_setup scripts).
     parser.add_argument("--dx", type=int, default=25, help="Linear-Gaussian state dimension.")
     parser.add_argument("--dy", type=int, default=1, help="Linear-Gaussian observation dimension.")
@@ -2220,7 +2295,7 @@ def build_parser():
                         default="both", help="Which maze run(s) to perform.")
     parser.add_argument("--maze-repeats", type=int, default=5,
                         help="Number of repeats for the maze experiment (averaged).")
-    parser.add_argument("--delete-raw", action="store_false",
+    parser.add_argument("--keep-raw", action="store_true",
                         help="Delete the raw maze archives after building the maze data set.")
     return parser
 
@@ -2229,8 +2304,12 @@ def resolve_device(name):
     if name == "auto":
         if not torch.cuda.is_available():
             warnings.warn("Warning CUDA not available, defaulting to CPU")
-        return torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-    return torch.device(name)
+        d = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    else:
+        d = torch.device(name)
+    if d.type == "cuda" and d.index is None:
+        d = torch.device("cuda", torch.cuda.current_device())
+    return d
 
 
 def main(argv=None):
@@ -2249,8 +2328,8 @@ def main(argv=None):
     cfg = RunConfig(device=device, data_dir=args.data_dir, results_dir=args.results_dir,
                     smoke=args.smoke, dx=args.dx, dy=args.dy, alpha=args.alpha, beta=args.beta,
                     sigma=args.sigma, batch_size=args.batch_size, maze_deterministic=maze_det,
-                    maze_repeats=args.maze_repeats, delete_raw=args.delete_raw,
-                    overwrite_results=args.overwrite_results)
+                    maze_repeats=args.maze_repeats, delete_raw=not(args.keep_raw),
+                    overwrite_results=args.overwrite_results, clear_results=args.clear_results)
     cfg.data_dir.mkdir(parents=True, exist_ok=True)
     cfg.results_dir.mkdir(parents=True, exist_ok=True)
 
@@ -2279,13 +2358,23 @@ def main(argv=None):
     failures = []
     for name in experiments:
         try:
-            EXPERIMENTS[name](cfg, args.models)
+            if args.models is not None:
+                found_method = 0
+                for model in args.models:
+                    if model in EXPERIMENT_METHODS[name]:
+                        found_method = 1
+                        break
+                if found_method:
+                    failures = failures + [f"{name}_{f}" for f in EXPERIMENTS[name](cfg, args.models)]
+                else:
+                    print(f"Experiment {name} does not use requested models {args.models}. Skipping.")
+            else:
+                failures = failures + [f"{name}_{f}" for f in EXPERIMENTS[name](cfg, args.models)]
         except Exception:
             # Keep going so that one failing experiment does not abort the rest.
-            print(f"\n!! Experiment '{name}' failed:")
+            print(f"\n!! Experiment '{name}' failed entirely:")
             traceback.print_exc()
             failures.append(name)
-
     if failures:
         print(f"\nFinished, but the following experiment(s) failed: {', '.join(failures)}")
     else:

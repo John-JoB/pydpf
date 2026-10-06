@@ -30,6 +30,8 @@ https://python-dpf.readthedocs.io/en/latest/index.html
 Check out our getting started tutorial at:
 https://python-dpf.readthedocs.io/en/latest/tutorial.html
 
+The materials to replicate the experiments from our paper are found in `/replication_materials/`.
+
 If you use this package in your publication please cite our paper:
 
 .. code-block:: text

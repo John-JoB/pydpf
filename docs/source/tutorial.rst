@@ -75,10 +75,10 @@ Next we define the observation model. During filtering we will only need to eval
         def beta(self):
             return torch.exp(self.log_beta)
 
-        #Note: the evaluation function for the observation model is called 'score'
+        #Note: the evaluation function for the observation model is called 'fitness'
         #rather than 'log_density' as there is no requirement for this to be a
         #valid Markov kernel, and frequently for DPFs it isn't
-        def score(self, state, observation, **data):
+        def fitness(self, state, observation, **data):
             log_root_v = state + self.log_beta
             root_v = torch.exp(log_root_v)
             #Observations are independent of the particle so have one less

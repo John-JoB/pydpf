@@ -482,19 +482,15 @@ class DiffusionResampler(Module):
             sig2t =  multiple_unsqueeze((1 - torch.exp(2 * a * t)), 3)*stat_vars.unsqueeze(0)
             return semigroup, sig2t
 
-
-        def logpdf_trans(x, mts, sig2ts):
-            """(...,), (n, ...), (n, ...) -> (n, )"""
-            #normalised_state = (state - mts)/sig2ts
-            return torch.sum(self.log_pdf(x, mts, sig2ts ** 0.5), dim=-1)
-
-
         def s(x, sg, sig2ts):
             """Ensemble score"""
-            mts = state * sg + mu * (1 - sg)
-            log_alps = weight + logpdf_trans(x, mts, sig2ts)
-            log_alps, _ = normalise(log_alps)
-            return torch.sum(torch.exp(log_alps)[..., None].unsqueeze(2) * (-(x.unsqueeze(1) - mts.unsqueeze(2)) / sig2ts.unsqueeze(2)), dim=1)
+            xc = x - mu
+            mc = (state - mu) * sg
+            inv = 1.0 / sig2ts
+            cross = torch.bmm(xc * inv, mc.transpose(1, 2))
+            m_sq = 0.5 * torch.sum(mc * mc * inv, dim=-1)
+            alps = torch.softmax(weight.unsqueeze(1) + cross - m_sq.unsqueeze(1), dim=-1)
+            return (torch.bmm(alps, mc) - xc) * inv
 
         def drift(x, sg, sig2ts):
             return b2 * s(x, sg, sig2ts) + a * (mu - x)
